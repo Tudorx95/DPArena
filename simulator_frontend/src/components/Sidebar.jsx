@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { File, X, ChevronDown, ChevronRight, Plus, Folder, FolderOpen, FileSpreadsheet } from 'lucide-react';
 
 export default function Sidebar({
@@ -15,7 +15,9 @@ export default function Sidebar({
     onShowMultiExport,
     onReorderFiles,
     onRenameFile,
-    onMoveFile
+    onMoveFile,
+    width = 256,
+    onResize
 }) {
     const [expandedProjects, setExpandedProjects] = useState(new Set([activeProjectId]));
     const [showNewProjectInput, setShowNewProjectInput] = useState(false);
@@ -31,6 +33,38 @@ export default function Sidebar({
     // Rename state
     const [renamingFileId, setRenamingFileId] = useState(null);
     const [renameValue, setRenameValue] = useState('');
+
+    // Resize state
+    const isResizing = useRef(false);
+    const startX = useRef(0);
+    const startWidth = useRef(0);
+
+    const handleResizeMouseDown = useCallback((e) => {
+        e.preventDefault();
+        isResizing.current = true;
+        startX.current = e.clientX;
+        startWidth.current = width;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+
+        const handleMouseMove = (e) => {
+            if (!isResizing.current) return;
+            const delta = e.clientX - startX.current;
+            const newWidth = Math.min(500, Math.max(150, startWidth.current + delta));
+            onResize?.(newWidth);
+        };
+
+        const handleMouseUp = () => {
+            isResizing.current = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+    }, [width, onResize]);
 
     // Handle ESC key to cancel project/file creation or rename
     useEffect(() => {
@@ -198,7 +232,10 @@ export default function Sidebar({
     };
 
     return (
-        <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col h-full relative z-20 transition-colors">
+        <div
+            className="bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col h-full relative z-20 transition-colors"
+            style={{ width: `${width}px`, minWidth: '150px', maxWidth: '500px' }}
+        >
             {/* Header */}
             <div className="p-4 border-b border-gray-200 dark:border-gray-700">
                 <div className="flex items-center justify-between mb-2">
@@ -254,7 +291,7 @@ export default function Sidebar({
             </div>
 
             {/* Projects List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 sidebar-scroll">
                 {projects.length === 0 ? (
                     <div className="text-center py-8 text-gray-500 dark:text-gray-400 text-sm">
                         <Folder className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-gray-600" />
@@ -271,9 +308,8 @@ export default function Sidebar({
                             <div key={project.id} className="space-y-1">
                                 {/* Project Header */}
                                 <div
-                                    className={`flex items-center justify-between p-2 rounded cursor-pointer group ${
-                                        isActive ? 'bg-blue-50 dark:bg-blue-900/30' : 'hover:bg-gray-50 dark:hover:bg-gray-700'
-                                    } ${isDragOverProject ? 'ring-2 ring-blue-400 dark:ring-blue-500 bg-blue-50 dark:bg-blue-900/30' : ''}`}
+                                    className={`flex items-center justify-between p-2 rounded cursor-pointer group ${isActive ? 'bg-blue-50 dark:bg-blue-900/30' : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+                                        } ${isDragOverProject ? 'ring-2 ring-blue-400 dark:ring-blue-500 bg-blue-50 dark:bg-blue-900/30' : ''}`}
                                     onDragOver={(e) => handleDragOverProject(e, project.id)}
                                     onDrop={(e) => handleDropOnProject(e, project.id)}
                                 >
@@ -375,13 +411,11 @@ export default function Sidebar({
                                                         onDragOver={(e) => handleDragOver(e, file)}
                                                         onDrop={(e) => handleDrop(e, file, project.id)}
                                                         onDragEnd={handleDragEnd}
-                                                        className={`flex items-center justify-between p-2 rounded cursor-pointer group ${
-                                                            isFileActive
-                                                                ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
-                                                                : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
-                                                        } ${isDragOver ? 'border-t-2 border-blue-400 dark:border-blue-500' : ''} ${
-                                                            isBeingDragged ? 'opacity-50' : ''
-                                                        }`}
+                                                        className={`flex items-center justify-between p-2 rounded cursor-pointer group ${isFileActive
+                                                            ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+                                                            : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                                            } ${isDragOver ? 'border-t-2 border-blue-400 dark:border-blue-500' : ''} ${isBeingDragged ? 'opacity-50' : ''
+                                                            }`}
                                                         onClick={() => {
                                                             if (renamingFileId !== file.id) {
                                                                 // Switch to this project if not already active
@@ -439,6 +473,13 @@ export default function Sidebar({
                     })
                 )}
             </div>
+
+            {/* Resize Handle */}
+            <div
+                onMouseDown={handleResizeMouseDown}
+                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-400 dark:hover:bg-blue-500 transition-colors z-30"
+                style={{ marginRight: '-2px' }}
+            />
         </div>
     );
 }

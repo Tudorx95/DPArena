@@ -405,43 +405,37 @@ class EnhancedFederatedServer:
     
     def _aggregate_weights_foolsgold(self, client_weights):
         """
-        FoolsGold-inspired defense: penalizează clienți cu gradienți anti-corelați.
+        FoolsGold defense îmbunătățit cu referință robustă.
         
         Referință: Fung et al. "Mitigating Sybils in Federated Learning Poisoning" 2020
         
-        Principiu: 
-        1. Calculează update-ul fiecărui client (diferența față de ponderile globale)
-        2. Măsoară cosine similarity între toți clienții  
-        3. Clienții onești au update-uri diverse (similaritate mică între ei)
-        4. Clienții malițioși (label flip) au update-uri corelate între ei
-           dar anti-corelate cu clienții onești
-        5. Penalizează clienții cu similaritate mare (probabil coluziune)
-           și pe cei anti-corelați cu media (probabil poisoning)
+        Îmbunătățiri față de FoolsGold clasic:
+        1. Folosește MEDIAN ca referință (nu mean) — rezistent la 50% malițioși
+        2. Penalizare cu gradient de separare — nu binary, ci sigmoid
+        3. Detectare clustering: clienți prea similari între ei = probabil coluziune
         
-        Funcționează pentru label_flip deoarece:
-        - Label flip produce gradienți de magnitudine normală (trece de trimmed_mean)
-        - DAR cu direcție semantică opusă (cosine similarity negativă cu clienții onești)
-        - FoolsGold detectează exact această corelație/anti-corelație
+        Funcționează pe label_flip deoarece:
+        - Random flip: clienții malițioși au update-uri cu noise → corelație mare între ei
+        - Targeted flip: toți trag spre aceeași clasă → corelație foarte mare între ei
+        - FoolsGold detectează ambele pattern-uri prin pairwise similarity
         """
         num_clients = len(client_weights)
         
-        if num_clients < 2:
+        if num_clients < 3:
             return self._aggregate_weights_fedavg(client_weights, [1] * num_clients)
         
-        # Step 1: Flatten weights to vectors for cosine similarity
-        flat_weights = []
+        # Step 1: Flatten updates (diferențe față de modelul global)
+        global_flat = np.concatenate([w.flatten().astype(np.float64) for w in self.global_weights])
+        
+        updates = []
         for cw in client_weights:
             flat = np.concatenate([w.flatten().astype(np.float64) for w in cw])
-            flat_weights.append(flat)
+            updates.append(flat - global_flat)
         
-        # Step 2: Compute updates (difference from global weights)
-        global_flat = np.concatenate([w.flatten().astype(np.float64) for w in self.global_weights])
-        updates = [fw - global_flat for fw in flat_weights]
-        
-        # Step 3: Compute pairwise cosine similarity matrix
         norms = [np.linalg.norm(u) for u in updates]
-        cs_matrix = np.zeros((num_clients, num_clients))
         
+        # Step 2: Pairwise cosine similarity
+        cs_matrix = np.zeros((num_clients, num_clients))
         for i in range(num_clients):
             for j in range(i + 1, num_clients):
                 if norms[i] > 1e-10 and norms[j] > 1e-10:
@@ -449,47 +443,139 @@ class EnhancedFederatedServer:
                     cs_matrix[i][j] = cs
                     cs_matrix[j][i] = cs
         
-        # Step 4: Compute trust scores (FoolsGold logic)
-        # - High pairwise similarity = likely colluding (Sybil attack)
-        # - Penalize clients whose updates are too similar to each other
-        scores = np.zeros(num_clients)
+        # Step 3: Referință robustă — MEDIAN al update-urilor (nu mean)
+        # Median e rezistent la până la 50% outliers
+        median_update = np.median(updates, axis=0)
+        median_norm = np.linalg.norm(median_update)
+        
+        # Step 4: Cosine similarity cu referința robustă
+        cos_with_ref = np.zeros(num_clients)
         for i in range(num_clients):
-            # Maximum similarity to any other client
-            max_sim = np.max(np.abs(cs_matrix[i]))
-            # FoolsGold: score = 1 - max_similarity (penalize high similarity)
-            scores[i] = 1.0 - max_sim
+            if norms[i] > 1e-10 and median_norm > 1e-10:
+                cos_with_ref[i] = np.dot(updates[i], median_update) / (norms[i] * median_norm)
         
-        # Step 5: Additional check — penalize anti-correlation with majority
-        # Compute mean update direction (robust: use median of cosine sims)
-        mean_update = np.mean(updates, axis=0)
-        mean_norm = np.linalg.norm(mean_update)
+        # Step 5: Scor de coluziune — cât de similar e cu alți clienți
+        # Clienți malițioși (label flip) au update-uri similare între ei
+        collusion_scores = np.zeros(num_clients)
+        for i in range(num_clients):
+            # Media similarității cu toți ceilalți clienți
+            others = [cs_matrix[i][j] for j in range(num_clients) if j != i]
+            collusion_scores[i] = np.mean(others) if others else 0
         
-        if mean_norm > 1e-10:
-            for i in range(num_clients):
-                if norms[i] > 1e-10:
-                    cos_with_mean = np.dot(updates[i], mean_update) / (norms[i] * mean_norm)
-                    # Penalize clients pulling in opposite direction
-                    if cos_with_mean < 0:
-                        # Anti-correlated with majority → likely poisoner
-                        scores[i] *= max(0.0, 1.0 + cos_with_mean)  # cos=-1 → score*0
-                    else:
-                        # Aligned with majority → boost slightly
-                        scores[i] *= (0.5 + 0.5 * cos_with_mean)
+        # Step 6: Scor final combinat
+        scores = np.ones(num_clients)
+        for i in range(num_clients):
+            # Factor 1: Alignment cu referința robustă (median)
+            # cos_with_ref ∈ [-1, 1] → transform la [0, 1]
+            # Clienți anti-corelați cu median → scor mic
+            alignment = (1.0 + cos_with_ref[i]) / 2.0  # map [-1,1] → [0,1]
+            
+            # Factor 2: Penalizare coluziune
+            # Dacă un client e foarte similar cu mulți alți clienți → suspect
+            # (clienții onești au update-uri diverse)
+            # collusion_scores ∈ [-1, 1], dar de obicei [0.5, 1.0]
+            collusion_penalty = 1.0
+            if collusion_scores[i] > 0.9:
+                collusion_penalty = 0.1  # Foarte suspect
+            elif collusion_scores[i] > 0.8:
+                collusion_penalty = 0.3
+            elif collusion_scores[i] > 0.7:
+                collusion_penalty = 0.6
+            
+            # Factor 3: Norm-based outlier detection
+            # Update-uri cu normă mult mai mare = suspect
+            median_norm_updates = np.median(norms)
+            norm_ratio = norms[i] / (median_norm_updates + 1e-10)
+            norm_penalty = 1.0
+            if norm_ratio > 3.0:
+                norm_penalty = 0.2
+            elif norm_ratio > 2.0:
+                norm_penalty = 0.5
+            
+            scores[i] = alignment * collusion_penalty * norm_penalty
         
-        # Step 6: Normalize scores to sum to 1
-        scores = np.maximum(scores, 1e-6)  # Prevent zero division
+        # Step 7: Aplică scor minim și normalizare
+        scores = np.maximum(scores, 0.01)  # Nu exclude complet pe nimeni
         scores = scores / np.sum(scores)
         
-        logger.info(f"FoolsGold scores: {[f'{s:.4f}' for s in scores]}")
+        logger.info(f"FoolsGold scores: {[f'{s:.3f}' for s in scores]}")
+        logger.info(f"Cos with median ref: {[f'{c:.3f}' for c in cos_with_ref]}")
+        logger.info(f"Collusion scores: {[f'{c:.3f}' for c in collusion_scores]}")
         logger.info(f"Malicious clients: {self.malicious_clients}")
         
-        # Step 7: Weighted average using trust scores
+        # Step 8: Weighted average
         aggregated = [np.zeros_like(w, dtype=np.float64) for w in client_weights[0]]
         for client_w, score in zip(client_weights, scores):
             for i, w in enumerate(client_w):
                 aggregated[i] += w.astype(np.float64) * score
         
         return [aggregated[i].astype(client_weights[0][i].dtype) for i in range(len(aggregated))]
+    
+    def _aggregate_weights_norm_clipping(self, client_weights, client_sizes):
+        """
+        Norm Clipping defense (Sun et al., arXiv:1911.07963).
+        
+        Referință: "Can You Really Backdoor Federated Learning?"
+        
+        Algoritm:
+        1. Calculează delta (update) pentru fiecare client: Δ_i = w_i - w_global
+        2. Calculează norma L2 a fiecărui update: ||Δ_i||_2
+        3. Determină threshold M = median(||Δ_i||_2) (adaptiv)
+        4. Dacă ||Δ_i||_2 > M, clip: Δ_i = Δ_i * (M / ||Δ_i||_2)
+        5. Aplică FedAvg pe update-urile clipped: w_global_new = w_global + Σ(Δ_i_clipped) / n
+        
+        Efect: Limitează influența oricărui client individual asupra modelului global,
+        reducând impactul atacurilor de tip backdoor fără a afecta performanța pe task-ul principal.
+        """
+        num_clients = len(client_weights)
+        
+        # Step 1: Calculează update-urile (delta) față de modelul global
+        global_flat = np.concatenate([w.flatten().astype(np.float64) for w in self.global_weights])
+        
+        updates = []
+        for cw in client_weights:
+            flat = np.concatenate([w.flatten().astype(np.float64) for w in cw])
+            updates.append(flat - global_flat)
+        
+        # Step 2: Calculează norma L2 a fiecărui update
+        norms = [np.linalg.norm(u) for u in updates]
+        logger.info(f"Norm clipping - Update norms: {[f'{n:.4f}' for n in norms]}")
+        
+        # Step 3: Threshold adaptiv M = median al normelor
+        M = np.median(norms)
+        logger.info(f"Norm clipping - Threshold M (median): {M:.4f}")
+        
+        # Step 4: Clip fiecare update la norma M
+        clipped_updates = []
+        for i, (update, norm) in enumerate(zip(updates, norms)):
+            if norm > M and M > 0:
+                # Scale down update-ul la norma M
+                clipped = update * (M / norm)
+                logger.info(f"  Client {i}: clipped {norm:.4f} -> {M:.4f}")
+            else:
+                clipped = update
+            clipped_updates.append(clipped)
+        
+        # Step 5: FedAvg pe update-urile clipped
+        total_size = sum(client_sizes)
+        avg_update = np.zeros_like(global_flat)
+        for update, size in zip(clipped_updates, client_sizes):
+            weight = size / total_size
+            avg_update += update * weight
+        
+        # Reconstruiește weights-urile din update-ul mediu
+        new_flat = global_flat + avg_update
+        
+        # Reconstruct layer shapes
+        aggregated = []
+        offset = 0
+        for w in self.global_weights:
+            numel = w.size
+            layer_flat = new_flat[offset:offset + numel]
+            aggregated.append(layer_flat.reshape(w.shape).astype(w.dtype))
+            offset += numel
+        
+        return aggregated
     
     def _aggregate_weights(self, client_weights, client_sizes):
         """Agregare ponderi cu protecție împotriva data poisoning"""
@@ -503,6 +589,8 @@ class EnhancedFederatedServer:
             return self._aggregate_weights_median(client_weights)
         elif method == 'foolsgold':
             return self._aggregate_weights_foolsgold(client_weights)
+        elif method == 'norm_clipping':
+            return self._aggregate_weights_norm_clipping(client_weights, client_sizes)
         elif method == 'trimmed_mean_krum':
             trimmed = self._aggregate_weights_trimmed_mean(client_weights, trim_ratio=0.1)
             return trimmed
@@ -605,17 +693,22 @@ class EnhancedFederatedServer:
                 'weights': self.global_weights
             })
         
-        # Așteaptă confirmări
+        # Așteaptă confirmări cu deadline total
         debug(f"Waiting for {self.num_clients} client confirmations...")
-        for i in range(self.num_clients):
-            try:
-                msg = self.server_queue.get(timeout=60)
-                if msg['type'] != 'weights_received':
-                    debug(f"ERROR: Unexpected message from client {msg.get('client_id', '?')}: {msg['type']}")
-            except queue.Empty:
-                debug(f"ERROR: Timeout waiting for client {i} confirmation. Only {i}/{self.num_clients} confirmed.")
+        confirm_deadline = time.time() + 300  # 5 min total
+        confirmations = 0
+        while confirmations < self.num_clients:
+            remaining = confirm_deadline - time.time()
+            if remaining <= 0:
+                debug(f"ERROR: Timeout. Only {confirmations}/{self.num_clients} confirmed.")
                 debug(f"=== SERVER.RUN() ABORTED (timeout at confirmations) ===")
                 return
+            try:
+                msg = self.server_queue.get(timeout=min(remaining, 10))
+                if msg['type'] == 'weights_received':
+                    confirmations += 1
+            except queue.Empty:
+                continue
         
         debug("All clients confirmed. Starting training rounds...")
         
@@ -628,15 +721,26 @@ class EnhancedFederatedServer:
             
             round_updates = []
             
-            # Colectează update-uri de la clienți
-            for i in range(self.num_clients):
+            # Colectează update-uri de la toți clienții cu deadline total per rundă
+            total_timeout = 7200  # 2 ore per rundă (3 epoci * 10 clienți * ~16 min)
+            round_deadline = time.time() + total_timeout
+            
+            while len(round_updates) < self.num_clients:
+                remaining = round_deadline - time.time()
+                if remaining <= 0:
+                    debug(f"  Timeout: received {len(round_updates)}/{self.num_clients} after {total_timeout}s")
+                    break
                 try:
-                    update = self.server_queue.get(timeout=600)
+                    update = self.server_queue.get(timeout=min(remaining, 30))
                     if update['type'] == 'round_update' and update['round'] == round_nr:
                         round_updates.append(update)
                         debug(f"  Received update from client {update['client_id']} (acc={update.get('accuracy', 'N/A'):.4f})")
+                    elif update['type'] == 'round_update' and update['round'] != round_nr:
+                        debug(f"  WARNING: Discarding stale update from client {update['client_id']} (round {update['round']} != {round_nr})")
+                    elif update['type'] == 'weights_received':
+                        pass  # Stale confirmation from previous round
                 except queue.Empty:
-                    debug(f"  ERROR: Timeout waiting for client {i} in round {round_nr}")
+                    continue
             
             debug(f"  Received {len(round_updates)}/{self.num_clients} updates")
             
@@ -716,12 +820,20 @@ class EnhancedFederatedServer:
                         'weights': self.global_weights
                     })
                 
-                # Așteaptă confirmări
-                for i in range(self.num_clients):
+                # Așteaptă confirmări cu deadline total
+                confirm_deadline = time.time() + 300  # 5 min total
+                confirmations = 0
+                while confirmations < self.num_clients:
+                    remaining = confirm_deadline - time.time()
+                    if remaining <= 0:
+                        debug(f"  WARNING: Weight confirm timeout. {confirmations}/{self.num_clients} confirmed.")
+                        break
                     try:
-                        self.server_queue.get(timeout=60)
+                        msg = self.server_queue.get(timeout=min(remaining, 10))
+                        if msg['type'] == 'weights_received':
+                            confirmations += 1
                     except queue.Empty:
-                        debug(f"  WARNING: Timeout waiting for weight confirmation from client {i}")
+                        continue
         
         # Notifică sfârșit simulare
         for i in range(self.num_clients):
@@ -818,10 +930,10 @@ class EnhancedFederatedClient:
             # Antrenare
             if self.use_template and TEMPLATE_FUNCS.has_function('train_neural_network'):
                 train_func = TEMPLATE_FUNCS.get_function('train_neural_network')
-                train_func(self.model, train_ds, epochs=1, verbose=0)
+                train_func(self.model, train_ds, epochs=3, verbose=0)
             else:
                 if FRAMEWORK == 'tensorflow':
-                    self.model.fit(train_ds, epochs=1, verbose=0)
+                    self.model.fit(train_ds, epochs=3, verbose=0)
                 else:  # pytorch
                     raise RuntimeError("train_neural_network() required in template_code.py for PyTorch")
             
@@ -978,7 +1090,7 @@ def main():
     parser.add_argument('--data_poisoning', action='store_true',
                        help='Enable data poisoning attack detection and logging')
     parser.add_argument('--data_poison_protection', type=str, default='fedavg',
-                       choices=['fedavg', 'krum', 'trimmed_mean', 'median', 'foolsgold', 'trimmed_mean_krum', 'random'],
+                       choices=['fedavg', 'krum', 'trimmed_mean', 'median', 'foolsgold', 'norm_clipping', 'trimmed_mean_krum', 'random'],
                        help='Aggregation method for data poison protection')
     parser.add_argument('--template', type=str, default=None,
                        help='Path to template_code.py for importing custom functions')
@@ -1088,9 +1200,9 @@ def main():
     # Wait for clients
     logger.info("Waiting for clients to finish...")
     for i, thread in enumerate(client_threads):
-        thread.join(timeout=120)
+        thread.join(timeout=600)
         if thread.is_alive():
-            logger.warning(f"Client {i} still running")
+            logger.warning(f"Client {i} still running after 600s")
     
     logger.info(f"✅ FL simulation completed! ({FRAMEWORK.upper()})")
 

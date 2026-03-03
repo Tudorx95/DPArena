@@ -318,13 +318,26 @@ export default function OutputCell({ output, isLoading, orchestratorStatus, onCa
                             ))}
                         </div>
 
-                        {/* Console Output */}
-                        {output && (
-                            <div className="p-3 bg-green-50 dark:bg-gray-800 rounded-lg border border-green-300 dark:border-green-700/50">
-                                <p className="text-xs text-green-600 dark:text-green-400 font-semibold mb-2">Console Output:</p>
-                                <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{output}</pre>
-                            </div>
-                        )}
+                        {/* Simulation Config Info (filtered console output) */}
+                        {output && (() => {
+                            const filteredLines = output
+                                .split('\n')
+                                .filter(line => {
+                                    const trimmed = line.trim().toLowerCase();
+                                    return !trimmed.includes('sending simulation to orchestrator') &&
+                                        !trimmed.includes('simulation queued on orchestrator') &&
+                                        !trimmed.includes('✅');
+                                })
+                                .join('\n')
+                                .trim();
+
+                            return filteredLines ? (
+                                <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-700/50">
+                                    <p className="text-xs text-indigo-600 dark:text-indigo-400 font-semibold mb-2">Simulation Details:</p>
+                                    <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{filteredLines}</pre>
+                                </div>
+                            ) : null;
+                        })()}
 
                         {/* Final Results */}
                         {orchestratorStatus.results_data && (

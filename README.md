@@ -94,7 +94,48 @@ This starts three containers:
 
 Access the platform at **http://localhost:3000**.
 
-#### 5. Demo credentials
+#### 5. Deploying on a Remote Server
+
+When the application server has a different IP (e.g., `10.13.70.3`) and users will access the platform from other machines, you need to update **two files** so the frontend can reach the backend and the backend accepts requests from the correct origin.
+
+##### 5.1. `docker-compose.yaml` — Frontend environment variables
+
+In the `frontend` service, replace `localhost` with the server's IP:
+
+```diff
+     environment:
+-      - REACT_APP_API_URL=http://localhost:8000
+-      - REACT_APP_WS_URL=ws://localhost:8000
++      - REACT_APP_API_URL=http://10.13.70.3:8000
++      - REACT_APP_WS_URL=ws://10.13.70.3:8000
+```
+
+> **Why:** The React app runs in the user's browser, so it must call the backend using a routable IP, not `localhost`.
+
+##### 5.2. `backend/main.py` — CORS `allow_origins`
+
+Add the server's IP to the `allow_origins` list in the CORS middleware configuration:
+
+```diff
+ app.add_middleware(
+     CORSMiddleware,
+-    allow_origins=["http://localhost:3000", "http://frontend:3000"],
++    allow_origins=["http://localhost:3000", "http://frontend:3000", "http://10.13.70.3:3000"],
+     allow_credentials=True,
+     allow_methods=["*"],
+     allow_headers=["*"],
+ )
+```
+
+> **Why:** Without the server IP in `allow_origins`, the browser will block API requests due to CORS policy.
+
+After making both changes, restart the platform:
+
+```bash
+docker compose down && docker compose up --build -d
+```
+
+#### 6. Demo credentials
 
 A demo user is created automatically:
 - **Username:** `demo`

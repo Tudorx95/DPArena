@@ -50,7 +50,7 @@ export default function SimulationOptions({ onClose, onSave, initialConfig }) {
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto sidebar-scroll">
                 <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <Settings className="w-6 h-6 text-blue-600 dark:text-blue-400" />
@@ -395,6 +395,7 @@ export default function SimulationOptions({ onClose, onSave, initialConfig }) {
                                 <option value="trimmed_mean">Trimmed Mean - Removes extremes (resistant to label-flipping)</option>
                                 <option value="median">Median - Resistant to 20% malicious clients</option>
                                 <option value="foolsgold">FoolsGold - Sybil/Label Flip defense</option>
+                                <option value="norm_clipping">Norm Clipping - Clips update norms (backdoor defense)</option>
                                 <option value="trimmed_mean_krum">Trimmed Mean + Krum - Hybrid approach</option>
                                 <option value="random">Random - Randomizes between Krum and Trimmed Mean</option>
                             </select>

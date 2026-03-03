@@ -41,6 +41,7 @@ function AppContent() {
 
     const [showLogin, setShowLogin] = useState(true);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [sidebarWidth, setSidebarWidth] = useState(256);
 
     // Projects and files state
     const [projects, setProjects] = useState([]);
@@ -1060,6 +1061,8 @@ function AppContent() {
                 onReorderFiles={handleReorderFiles}
                 onRenameFile={handleRenameFile}
                 onMoveFile={handleMoveFile}
+                width={sidebarWidth}
+                onResize={setSidebarWidth}
             />
             <div className="flex-1 flex flex-col">
                 <TopBar

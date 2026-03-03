@@ -453,8 +453,8 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             f"{config['N']} "
             f"{config['M']} "
             f"{model_path} "                        # NN_NAME_PATH (full model path)
-            f"{user_dir / 'clean_data_poisoned'} "
             f"{user_dir / 'clean_data'} "
+            f"{user_dir / 'clean_data_poisoned'} "
             f"{config['R']} "
             f"{config['ROUNDS']} "
             f"--strategy {config['strategy']} "
@@ -492,8 +492,8 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             f"{config['N']} "
             f"{config['M']} "
             f"{model_path} "                        # NN_NAME_PATH (full model path)
-            f"{user_dir / 'clean_data_poisoned'} "
             f"{user_dir / 'clean_data'} "
+            f"{user_dir / 'clean_data_poisoned'} "
             f"{config['R']} "
             f"{config['ROUNDS']} "
             f"--strategy {config['strategy']} "
