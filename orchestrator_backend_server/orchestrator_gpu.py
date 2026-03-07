@@ -204,7 +204,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             capture_output=True, 
             text=True, 
             executable="/bin/bash", 
-            timeout=300
+            timeout=600
         )
         
         if result_verify.returncode != 0:

@@ -152,7 +152,7 @@ export default function OutputCell({ output, isLoading, orchestratorStatus, onCa
                 )}
             </div>
 
-            <div className="flex-1 p-4 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-mono text-sm overflow-auto">
+            <div className="flex-1 p-4 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-mono text-sm overflow-auto sidebar-scroll">
                 {isLoading || orchestratorStatus?.status === 'running' ? (
                     <div className="space-y-4">
                         {/* Main Status Indicator */}

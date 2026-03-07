@@ -23,3 +23,27 @@
                       - double-click => rename pe o simulare 
                       - drag & drop simulare de la un proiect la altul 
                       - ! reordonarea code_cell si output_cell: code_cell in centru-stanga si output_cell in centru-dreapta. 
+
+
+Tip atac
+
+Label_Flip
+BadNets Backdoor
+Blended Backdoor
+SIG Backdoor
+Trojan Backdoor(watermark)
+Semantic Backdoor
+Edge-case Backdoor 
+
+
+Tip Protectie 
+
+FedAvg
+Trimmed Mean 
+Krum
+Median 
+FoolsGold
+Norm Clipping
+Random 
+
+- de adaugat o limita minima de clienti pt diferite tipuri de atacuri si protectii

@@ -322,6 +322,9 @@ class EnhancedFederatedServer:
         self.round_times = []
         self.malicious_clients = []
         
+        # FoolsGold: istoric acumulat al update-urilor per client (Algorithm 1, line 3)
+        self.foolsgold_histories = {}  # client_id -> np.array (flattened accumulated gradient)
+        
         # Identificare clienți malițioși
         self._assign_malicious_clients()
     
@@ -403,28 +406,29 @@ class EnhancedFederatedServer:
             aggregated.append(median_vals.astype(client_weights[0][layer_idx].dtype))
         return aggregated
     
-    def _aggregate_weights_foolsgold(self, client_weights):
+    def _aggregate_weights_foolsgold(self, client_weights, client_ids=None):
         """
-        FoolsGold defense îmbunătățit cu referință robustă.
+        FoolsGold — implementare fidelă conform Algorithm 1 din:
+        Fung, Yoon & Beschastnikh, "Mitigating Sybils in Federated Learning Poisoning"
+        (arXiv:1808.04866v5, RAID 2020)
         
-        Referință: Fung et al. "Mitigating Sybils in Federated Learning Poisoning" 2020
-        
-        Îmbunătățiri față de FoolsGold clasic:
-        1. Folosește MEDIAN ca referință (nu mean) — rezistent la 50% malițioși
-        2. Penalizare cu gradient de separare — nu binary, ci sigmoid
-        3. Detectare clustering: clienți prea similari între ei = probabil coluziune
-        
-        Funcționează pe label_flip deoarece:
-        - Random flip: clienții malițioși au update-uri cu noise → corelație mare între ei
-        - Targeted flip: toți trag spre aceeași clasă → corelație foarte mare între ei
-        - FoolsGold detectează ambele pattern-uri prin pairwise similarity
+        Pași conform paper-ului:
+        1. Acumulează istoricul update-urilor per client (Hi = Σ Δi,t)
+        2. Calculează cosine similarity pairwise pe istorice
+        3. vi = max_j(cs_ij) — maximul similarității per client
+        4. Pardoning: dacă vj > vi → cs_ij *= vi/vj (protejează clienții onești)
+        5. αi = 1 - max_j(cs_ij) — learning rate adaptat
+        6. Rescalare: αi = αi / max_i(α) (cel mai onest → α=1)
+        7. Logit: αi = κ(ln[αi/(1-αi)] + 0.5) — amplificare
+        8. Agregare ponderată: w_t+1 = w_t + Σ αi * Δi,t
         """
         num_clients = len(client_weights)
+        kappa = 1.0  # Confidence parameter (κ = 1 în evaluarea din paper)
         
-        if num_clients < 3:
+        if num_clients < 2:
             return self._aggregate_weights_fedavg(client_weights, [1] * num_clients)
         
-        # Step 1: Flatten updates (diferențe față de modelul global)
+        # Step 1: Calculează update-urile curente (Δi,t = weights_client - weights_global)
         global_flat = np.concatenate([w.flatten().astype(np.float64) for w in self.global_weights])
         
         updates = []
@@ -432,84 +436,89 @@ class EnhancedFederatedServer:
             flat = np.concatenate([w.flatten().astype(np.float64) for w in cw])
             updates.append(flat - global_flat)
         
-        norms = [np.linalg.norm(u) for u in updates]
+        # Step 2: Acumulează istoricul (Algorithm 1, line 3: Hi = Σ Δi,t)
+        # Folosim client_id-urile reale pentru a urmări fiecare client consistent peste runde
+        if client_ids is None:
+            client_ids = list(range(num_clients))
         
-        # Step 2: Pairwise cosine similarity
+        for idx, cid in enumerate(client_ids):
+            if cid not in self.foolsgold_histories:
+                self.foolsgold_histories[cid] = np.zeros_like(updates[idx])
+            self.foolsgold_histories[cid] += updates[idx]
+        
+        # Step 3: Cosine similarity pairwise pe ISTORICE (nu pe update-uri curente!)
+        histories = [self.foolsgold_histories[cid] for cid in client_ids]
+        h_norms = [np.linalg.norm(h) for h in histories]
+        
         cs_matrix = np.zeros((num_clients, num_clients))
         for i in range(num_clients):
             for j in range(i + 1, num_clients):
-                if norms[i] > 1e-10 and norms[j] > 1e-10:
-                    cs = np.dot(updates[i], updates[j]) / (norms[i] * norms[j])
+                if h_norms[i] > 1e-10 and h_norms[j] > 1e-10:
+                    cs = np.dot(histories[i], histories[j]) / (h_norms[i] * h_norms[j])
+                    cs = np.clip(cs, -1.0, 1.0)
                     cs_matrix[i][j] = cs
                     cs_matrix[j][i] = cs
         
-        # Step 3: Referință robustă — MEDIAN al update-urilor (nu mean)
-        # Median e rezistent la până la 50% outliers
-        median_update = np.median(updates, axis=0)
-        median_norm = np.linalg.norm(median_update)
-        
-        # Step 4: Cosine similarity cu referința robustă
-        cos_with_ref = np.zeros(num_clients)
+        # Step 4: vi = max_j(cs_ij) — maximul pairwise similarity per client
+        # (Algorithm 1, line 8)
+        v = np.zeros(num_clients)
         for i in range(num_clients):
-            if norms[i] > 1e-10 and median_norm > 1e-10:
-                cos_with_ref[i] = np.dot(updates[i], median_update) / (norms[i] * median_norm)
+            v[i] = max(cs_matrix[i][j] for j in range(num_clients) if j != i)
         
-        # Step 5: Scor de coluziune — cât de similar e cu alți clienți
-        # Clienți malițioși (label flip) au update-uri similare între ei
-        collusion_scores = np.zeros(num_clients)
+        # Step 5: Pardoning (Algorithm 1, lines 12-14)
+        # Dacă vj > vi → cs_ij *= vi/vj
+        # Protejează clienții onești care au similaritate accidentală cu sybils
+        cs_pardoned = cs_matrix.copy()
         for i in range(num_clients):
-            # Media similarității cu toți ceilalți clienți
-            others = [cs_matrix[i][j] for j in range(num_clients) if j != i]
-            collusion_scores[i] = np.mean(others) if others else 0
+            for j in range(num_clients):
+                if i != j and v[j] > v[i] and v[j] > 1e-10:
+                    cs_pardoned[i][j] *= v[i] / v[j]
         
-        # Step 6: Scor final combinat
-        scores = np.ones(num_clients)
+        # Step 6: αi = 1 - max_j(cs_pardoned_ij) (Algorithm 1, line 16)
+        alpha = np.zeros(num_clients)
         for i in range(num_clients):
-            # Factor 1: Alignment cu referința robustă (median)
-            # cos_with_ref ∈ [-1, 1] → transform la [0, 1]
-            # Clienți anti-corelați cu median → scor mic
-            alignment = (1.0 + cos_with_ref[i]) / 2.0  # map [-1,1] → [0,1]
-            
-            # Factor 2: Penalizare coluziune
-            # Dacă un client e foarte similar cu mulți alți clienți → suspect
-            # (clienții onești au update-uri diverse)
-            # collusion_scores ∈ [-1, 1], dar de obicei [0.5, 1.0]
-            collusion_penalty = 1.0
-            if collusion_scores[i] > 0.9:
-                collusion_penalty = 0.1  # Foarte suspect
-            elif collusion_scores[i] > 0.8:
-                collusion_penalty = 0.3
-            elif collusion_scores[i] > 0.7:
-                collusion_penalty = 0.6
-            
-            # Factor 3: Norm-based outlier detection
-            # Update-uri cu normă mult mai mare = suspect
-            median_norm_updates = np.median(norms)
-            norm_ratio = norms[i] / (median_norm_updates + 1e-10)
-            norm_penalty = 1.0
-            if norm_ratio > 3.0:
-                norm_penalty = 0.2
-            elif norm_ratio > 2.0:
-                norm_penalty = 0.5
-            
-            scores[i] = alignment * collusion_penalty * norm_penalty
+            max_cs = max(cs_pardoned[i][j] for j in range(num_clients) if j != i)
+            alpha[i] = 1.0 - max_cs
         
-        # Step 7: Aplică scor minim și normalizare
-        scores = np.maximum(scores, 0.01)  # Nu exclude complet pe nimeni
-        scores = scores / np.sum(scores)
+        # Step 7: Rescalare (Algorithm 1, line 18)
+        # αi = αi / max_i(α) — cel mai onest client primește α = 1
+        max_alpha = np.max(alpha)
+        if max_alpha > 1e-10:
+            alpha = alpha / max_alpha
+        else:
+            alpha = np.ones(num_clients) / num_clients
         
-        logger.info(f"FoolsGold scores: {[f'{s:.3f}' for s in scores]}")
-        logger.info(f"Cos with median ref: {[f'{c:.3f}' for c in cos_with_ref]}")
-        logger.info(f"Collusion scores: {[f'{c:.3f}' for c in collusion_scores]}")
+        # Step 8: Logit function (Algorithm 1, line 19)
+        # αi = κ(ln[αi/(1-αi)] + 0.5)
+        for i in range(num_clients):
+            # Clip to avoid log(0) or division by zero
+            ai = np.clip(alpha[i], 1e-6, 1.0 - 1e-6)
+            alpha[i] = kappa * (np.log(ai / (1.0 - ai)) + 0.5)
+        
+        # Clip to [0, 1] range (paper: "any value exceeding 0-1 range is clipped")
+        alpha = np.clip(alpha, 0.0, 1.0)
+        
+        # Normalizare la sumă 1 pentru agregare ponderată
+        alpha_sum = np.sum(alpha)
+        if alpha_sum > 1e-10:
+            weights_fg = alpha / alpha_sum
+        else:
+            weights_fg = np.ones(num_clients) / num_clients
+        
+        logger.info(f"FoolsGold alpha (pre-norm): {[f'{a:.4f}' for a in alpha]}")
+        logger.info(f"FoolsGold weights: {[f'{w:.4f}' for w in weights_fg]}")
+        logger.info(f"FoolsGold v (max pairwise sim): {[f'{vi:.4f}' for vi in v]}")
         logger.info(f"Malicious clients: {self.malicious_clients}")
         
-        # Step 8: Weighted average
+        # Step 9: Agregare ponderată (Algorithm 1, line 20)
+        # w_t+1 = w_t + Σ αi * Δi,t
+        # Echivalent: weighted average of client weights cu weights_fg
         aggregated = [np.zeros_like(w, dtype=np.float64) for w in client_weights[0]]
-        for client_w, score in zip(client_weights, scores):
-            for i, w in enumerate(client_w):
-                aggregated[i] += w.astype(np.float64) * score
+        for client_w, w in zip(client_weights, weights_fg):
+            for layer_idx, layer_w in enumerate(client_w):
+                aggregated[layer_idx] += layer_w.astype(np.float64) * w
         
-        return [aggregated[i].astype(client_weights[0][i].dtype) for i in range(len(aggregated))]
+        return [agg.astype(client_weights[0][i].dtype) for i, agg in enumerate(aggregated)]
     
     def _aggregate_weights_norm_clipping(self, client_weights, client_sizes):
         """
@@ -577,7 +586,7 @@ class EnhancedFederatedServer:
         
         return aggregated
     
-    def _aggregate_weights(self, client_weights, client_sizes):
+    def _aggregate_weights(self, client_weights, client_sizes, client_ids=None):
         """Agregare ponderi cu protecție împotriva data poisoning"""
         method = self.data_poison_protection.lower()
         
@@ -588,7 +597,7 @@ class EnhancedFederatedServer:
         elif method == 'median':
             return self._aggregate_weights_median(client_weights)
         elif method == 'foolsgold':
-            return self._aggregate_weights_foolsgold(client_weights)
+            return self._aggregate_weights_foolsgold(client_weights, client_ids)
         elif method == 'norm_clipping':
             return self._aggregate_weights_norm_clipping(client_weights, client_sizes)
         elif method == 'trimmed_mean_krum':
@@ -753,11 +762,12 @@ class EnhancedFederatedServer:
             
             # Agregare weights
             client_weights = [upd['weights'] for upd in round_updates]
+            client_ids = [upd['client_id'] for upd in round_updates]
             client_sizes = [1] * len(round_updates)
             
             debug(f"  Aggregating with {self.data_poison_protection} ({len(client_weights)} clients, {len(client_weights[0])} layers)...")
             try:
-                self.global_weights = self._aggregate_weights(client_weights, client_sizes)
+                self.global_weights = self._aggregate_weights(client_weights, client_sizes, client_ids)
                 debug(f"  Aggregation OK. Layers: {len(self.global_weights)}")
                 
                 # Check for NaN
