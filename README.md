@@ -209,15 +209,19 @@ tail -f output.log
 
 ## Orchestrator Pipeline — Step by Step
 
-When a user clicks **Run** on the frontend, the following pipeline executes on the GPU server inside `run_simulation_pipeline()`:
+The simulation process defines the complete execution pipeline that is triggered when a user submits a simulation from the frontend. The pipeline is managed by the Python Orchestrator on the GPU server (`run_simulation_pipeline()`) and consists of a series of sequential stages, each with built-in error handling. If any stage fails, the pipeline halts and generates an error report that is relayed back to the user.
 
-### Step 0 — GPU Allocation
+### Stage 1 — Start Simulation Task
 
-The `GPUManager` detects all available NVIDIA GPUs via `nvidia-smi` and maintains a thread-safe queue. Each simulation requests a dedicated GPU (with a 10‑minute timeout). If no GPU is available, it falls back to CPU. The GPU is **always released** in the `finally` block, even on errors or cancellations.
+The orchestrator creates a new task entry and begins the pipeline execution asynchronously. The task status is set to `running` and is tracked via a shared `active_simulations` dictionary.
 
-### Step 1 — Directory Setup
+### Stage 2 — Verify Template Structure
 
-Creates an isolated workspace for the task:
+Before consuming any computational resources, the orchestrator performs a **static analysis** of the user's training script using the `verify_template.py` module. This ensures the template defines all required functions (e.g., `download_data()`, model creation, proper training structure) and follows the expected interface contract.
+
+### Stage 3 — Create Task Directory
+
+The orchestrator creates an isolated workspace directory for the current simulation task, following the naming convention `user_{id}/task_{uuid}`:
 
 ```
 fl_simulations/
@@ -228,55 +232,55 @@ fl_simulations/
            └── results/               # Output metrics & analysis
 ```
 
-### Step 2 — Save Template & Config
+### Stage 4 — Verify Model Correctness
 
-- Writes the user's model code to `template_code.py`
-- Saves the simulation configuration (N, M, R, ROUNDS, attack params) as `simulation_config.json`
+Using the template script provided by the user, the orchestrator loads the model and runs a training session to prove the template's usability. The model is executed on the allocated GPU with `CUDA_VISIBLE_DEVICES` set, and the initial accuracy is recorded in `init-verification.json`.
 
-### Step 3 — Framework Detection
+### Stage 5 — Download Model from Repository
 
-Automatically detects whether the template uses **TensorFlow** or **PyTorch** by inspecting `import` statements, then activates the appropriate Conda environment (`fl_tensorflow` or `fl_pytorch`).
+The orchestrator invokes the model creation logic defined in the user's training script. If the template references a pre-trained model hosted on HuggingFace, it is downloaded at this stage. The trained model is saved in the appropriate format based on the detected framework (`.keras` for TensorFlow, `.pth` for PyTorch) and renamed to match the configured `NN_NAME`.
 
-### Step 4 — Template Verification
+### Stage 6 — Download Training and Testing Dataset
 
-Runs `verify_template.py` which performs **static analysis** on the user's code to ensure it defines the required interface (e.g., `download_data()`, model creation, proper training structure) before any GPU resources are consumed.
+The orchestrator calls the `download_data()` function defined in the user's training script to retrieve and prepare the dataset required for the simulation into the `clean_data/` directory. After download, the data is partitioned into `N` equal IID splits (one per federated client), while the test set is shared across all clients.
 
-### Step 5 — Model Training
+### Stage 7 — Allocate GPU
 
-Executes the user's `template_code.py` on the allocated GPU with `CUDA_VISIBLE_DEVICES` set. This step:
-- Creates the neural network model defined by the user
-- Trains it on the specified dataset
-- Saves the model file (`.keras` for TensorFlow, `.pth` for PyTorch)
-- Records initial accuracy in `init-verification.json`
+The `GPUManager` queries all available NVIDIA GPUs on the system via `nvidia-smi` and maintains a thread-safe queue. Each simulation requests a dedicated GPU (with a 10-minute timeout). If no GPUs are available within the timeout, the simulation falls back to CPU execution. The GPU is **guaranteed to be released** upon task completion, cancellation, or failure (via the `finally` block).
 
-### Step 6 — Dataset Download
+### Stage 8 — Activate Python Environment
 
-Calls the `download_data()` function defined in the user's template to fetch and prepare the training/test data into the `clean_data/` directory.
+The orchestrator performs **automatic framework detection** by analyzing the import statements in the user's training script. Based on whether the script uses TensorFlow or PyTorch, the orchestrator activates the corresponding pre-configured Conda environment (`fl_tensorflow` or `fl_pytorch`).
 
-### Step 7 — Data Poisoning
+### Stage 9 — Create a Poisoned Copy of the Original Dataset
 
-Runs `poison_data.py` against the clean dataset, applying the user-configured attack to generate the `clean_data_poisoned/` directory. Supports 7 attack types with per-attack parameters (see [Data Poisoning Attacks](#data-poisoning-attacks)).
+The orchestrator runs the `poison_data.py` script using the attack type and parameters selected by the user. This stage creates a copy of the clean dataset and applies the configured data poisoning attack to it, generating the `clean_data_poisoned/` directory. Supports 7 attack types with per-attack parameters (see [Data Poisoning Attacks](#data-poisoning-attacks)).
 
-### Step 8 — Federated Learning Simulations (3 Scenarios)
+### Stage 10–13 — Federated Learning Simulations (4 Scenarios)
 
-The `fd_simulator.py` script runs three FL simulations sequentially, each using the same model but different data/aggregation:
+With both the clean and poisoned datasets prepared, the pipeline enters the federated learning simulation phase. This phase executes **four distinct scenarios** sequentially using the `fd_simulator.py` script:
 
-| Scenario | Data | Aggregation | Purpose |
-|----------|------|-------------|---------|
-| **Clean** | `clean_data/` | FedAvg | Baseline — no attack |
-| **Poisoned** | `clean_data_poisoned/` | FedAvg | Measure attack impact |
-| **Poisoned + Protection** | `clean_data_poisoned/` | User-selected method | Evaluate defense |
+| Stage | Scenario | Data | Aggregation | Purpose |
+|-------|----------|------|-------------|---------|
+| **10** | Clean | `clean_data/` | FedAvg | Baseline — ideal (attack-free) conditions |
+| **11** | Clean + Defense | `clean_data/` | User-selected method | Measure defense overhead without attacks |
+| **12** | Poisoned | `clean_data_poisoned/` | FedAvg | Measure attack impact without defense |
+| **13** | Poisoned + Defense | `clean_data_poisoned/` | User-selected method | Evaluate defense effectiveness |
 
-Each scenario distributes data across `N` clients, where `M` are malicious and use the poisoned data for `R` rounds out of `ROUNDS` total.
+- **Scenario 1 (Stage 10)** — The first simulation uses exclusively the clean (unmodified) dataset. Data is distributed across `N` clients, none of which are malicious, and training proceeds for `ROUNDS` rounds using FedAvg. This establishes the baseline performance.
+- **Scenario 2 (Stage 11)** — The second simulation trains the global model on clean data, but replaces FedAvg with the user-selected robust aggregation method. This measures the overhead introduced by the defense in a non-adversarial environment, ensuring it does not significantly degrade model performance.
+- **Scenario 3 (Stage 12)** — The third simulation introduces the poisoned dataset. `M` out of `N` clients are designated as malicious and receive the poisoned data, while the remaining clients use clean data. Aggregation uses FedAvg without any defense. Malicious clients use the poisoned data for `R` out of `ROUNDS` total rounds, following the user-selected distribution strategy.
+- **Scenario 4 (Stage 13)** — The final simulation replicates the poisoned scenario but replaces FedAvg with the robust aggregation method selected by the user. By comparing the results of Scenario 4 against Scenario 2, users can assess how well the chosen aggregation strategy protects the global model against the specific poisoning attack.
 
-### Step 9 — Result Aggregation
+### Stage 14 — Generate Final Results
 
-Loads the metrics from all three scenarios, computes:
-- **Init / Clean / Poisoned / Poisoned+DP Accuracy**
-- **Accuracy drops** between scenarios
-- **Precision, Recall, F1 Score** (weighted average) per scenario
+After all four federated learning scenarios complete successfully, the orchestrator aggregates and compiles the final results. It computes comprehensive evaluation metrics including:
 
-Saves to:
+- **Accuracy** — values for each scenario (Initial, Clean, Clean + Defense, Poisoned, Poisoned + Defense)
+- **Accuracy drops** — between scenarios to quantify attack impact and defense effectiveness
+- **Precision, Recall, and F1 Score** — weighted average per scenario
+
+Results are saved to:
 - `results/analysis.json` — structured JSON with all metrics
 - `results/summary.txt` — human-readable summary
 - `results/attack_info.json` — poisoning attack details
@@ -285,7 +289,7 @@ The orchestrator marks the task as `completed`, and the backend polls these resu
 
 ### Cancellation Flow
 
-At every pipeline step, the orchestrator checks if the user has requested cancellation. If so:
+At every pipeline stage, the orchestrator checks if the user has requested cancellation. If so:
 1. The running process tree is killed (`kill_process_tree()`)
 2. The allocated GPU is released
 3. The task directory is deleted
@@ -331,7 +335,7 @@ At every pipeline step, the orchestrator checks if the user has requested cancel
 
 ### Evaluation Metrics
 
-Collected **per round** and **per scenario** (Clean / Poisoned / Poisoned+DP):
+Collected **per round** and **per scenario** (Clean / Clean+Defense / Poisoned / Poisoned+Defense):
 
 - **Accuracy** — global classification accuracy
 - **Precision** — weighted average
