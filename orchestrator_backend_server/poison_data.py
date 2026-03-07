@@ -767,6 +767,15 @@ Exemple:
                         choices=["rotation", "flip_both", "negative", "posterize", "solarize"],
                         help="Edge-case transform type")
     
+    # FL client partitioning parameters
+    parser.add_argument("--num_clients", type=int, default=0,
+                        help="Number of FL clients (0 = legacy mode, no partitioning)")
+    parser.add_argument("--num_malicious", type=int, default=0,
+                        help="Number of malicious clients to poison")
+    parser.add_argument("--strategy", type=str, default="first",
+                        choices=["first", "last", "alternate"],
+                        help="Which clients are malicious")
+    
     args = parser.parse_args()
     
     input_dir = Path(args.dir_name)
@@ -782,14 +791,63 @@ Exemple:
         'seed': 42
     }
     
-    apply_poisoning(
-        test_file=args.test_file,
-        nn_name=args.nn_name,
-        input_dir=str(input_dir),
-        output_dir=str(output_dir),
-        operation=args.operation,
-        intensity=args.intensity,
-        percentage=args.percentage,
-        target_class=args.target_class,
-        trigger_params=trigger_params
-    )
+    if args.num_clients > 0 and args.num_malicious > 0:
+        # ====== FL MODE: Per-client poisoning ======
+        # Determină clienții malițioși
+        if args.strategy == 'first':
+            malicious_ids = list(range(args.num_malicious))
+        elif args.strategy == 'last':
+            malicious_ids = list(range(args.num_clients - args.num_malicious, args.num_clients))
+        else:  # alternate
+            malicious_ids = list(range(0, args.num_clients, 2))[:args.num_malicious]
+        
+        print(f"FL Mode: {args.num_clients} clients, {args.num_malicious} malicious: {malicious_ids}")
+        
+        # Creează output dir structure: copiază toți clienții
+        import shutil
+        if os.path.exists(str(output_dir)):
+            shutil.rmtree(str(output_dir))
+        
+        # Copiază întreaga structură clean_data (inclusiv client_*/...)
+        shutil.copytree(str(input_dir), str(output_dir))
+        
+        # Aplică poisoning DOAR pe clienții malițioși
+        total_poisoned_all = 0
+        for client_id in malicious_ids:
+            client_input = input_dir / f"client_{client_id}"
+            client_output = output_dir / f"client_{client_id}"
+            
+            if not client_input.exists():
+                print(f"WARNING: client_{client_id} not found in {input_dir}")
+                continue
+            
+            print(f"Poisoning client_{client_id}...")
+            
+            # Aplică poisoning pe datele acestui client
+            # Re-folosim apply_poisoning dar pe directorul clientului
+            apply_poisoning(
+                test_file=args.test_file,
+                nn_name=args.nn_name,
+                input_dir=str(client_input),
+                output_dir=str(client_output),
+                operation=args.operation,
+                intensity=args.intensity,
+                percentage=args.percentage,
+                target_class=args.target_class,
+                trigger_params=trigger_params
+            )
+        
+        print(f"FL poisoning complete. Malicious clients: {malicious_ids}")
+    else:
+        # ====== LEGACY MODE: Poison entire dataset ======
+        apply_poisoning(
+            test_file=args.test_file,
+            nn_name=args.nn_name,
+            input_dir=str(input_dir),
+            output_dir=str(output_dir),
+            operation=args.operation,
+            intensity=args.intensity,
+            percentage=args.percentage,
+            target_class=args.target_class,
+            trigger_params=trigger_params
+        )

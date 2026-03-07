@@ -306,6 +306,69 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             app.logger.error(error_msg)
             return
         
+        # ========== STEP 7b: Partition data for FL clients (IID) ==========
+        # Împarte datele descărcate în N partiții egale, câte una per client.
+        # Fiecare client primește ~(total/N) imagini per clasă (IID split).
+        # Setul de test rămâne comun tuturor clienților (copiat integral).
+        partition_script = f"""
+import os, shutil, random
+from pathlib import Path
+
+data_dir = Path('{user_dir / 'clean_data'}')
+N = {config['N']}
+random.seed(42)
+
+train_dir = data_dir / 'train'
+test_dir = data_dir / 'test'
+
+# Detectează clasele din structura de directoare
+class_dirs = sorted([d.name for d in train_dir.iterdir() if d.is_dir()])
+num_classes = len(class_dirs)
+print(f'Detected {{num_classes}} classes: {{class_dirs}}')
+
+# Creează directoare per client
+for i in range(N):
+    client_dir = data_dir / f'client_{{i}}'
+    client_train = client_dir / 'train'
+    client_test = client_dir / 'test'
+    
+    if client_test.exists():
+        shutil.rmtree(client_test)
+    shutil.copytree(str(test_dir), str(client_test))
+    
+    for class_name in class_dirs:
+        (client_train / class_name).mkdir(parents=True, exist_ok=True)
+
+# Partitioneaza train data: IID split
+for class_name in class_dirs:
+    class_dir = train_dir / class_name
+    images = sorted([f.name for f in class_dir.glob('*') if f.is_file()])
+    random.shuffle(images)
+    
+    chunk_size = len(images) // N
+    for i in range(N):
+        start = i * chunk_size
+        end = start + chunk_size if i < N - 1 else len(images)
+        client_class_dir = data_dir / f'client_{{i}}' / 'train' / class_name
+        for img_name in images[start:end]:
+            shutil.copy2(str(class_dir / img_name), str(client_class_dir / img_name))
+
+print(f'Partitioned data into {{N}} clients (IID)')
+for i in range(N):
+    client_train = data_dir / f'client_{{i}}' / 'train'
+    total = sum(len(list((client_train / c).glob('*'))) for c in class_dirs if (client_train / c).exists())
+    print(f'  Client {{i}}: {{total}} train images')
+"""
+
+        cmd = f"{conda_activate} && cd {user_dir} && python -c \"{partition_script}\""
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env)
+        if result.returncode != 0:
+            error_msg = f"Data partitioning failed: {result.stderr}\nStdout: {result.stdout}"
+            shared_simulations[task_id] = {"status": "error", "message": error_msg}
+            app.logger.error(error_msg)
+            return
+        app.logger.info(f"Data partitioned: {result.stdout}")
+        
         shared_simulations[task_id] = {
             "status": "running", 
             "step": 4, 
@@ -321,12 +384,20 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         # ========== STEP 8: Poison data (v2) ==========
         poison_script = Path(__file__).parent / "poison_data.py"
         test_file = user_dir / "results" / "attack_info.json"
+        
+        # Auto-set target_class for label_flip (targeted flip is much stronger)
+        if not config.get('target_class') and config.get('poison_operation') == 'label_flip':
+            config['target_class'] = '0'
+        
         cmd = (
             f"{conda_activate} && "
             f"python {poison_script} {test_file} {config['NN_NAME']} {user_dir / 'clean_data'} "
             f"--operation {config['poison_operation']} "
             f"--intensity {config['poison_intensity']} "
-            f"--percentage {config['poison_percentage']}"
+            f"--percentage {config['poison_percentage']} "
+            f"--num_clients {config['N']} "
+            f"--num_malicious {config['M']} "
+            f"--strategy {config['strategy']}"
         )
         # Optional v2 parameters
         if config.get('target_class'):

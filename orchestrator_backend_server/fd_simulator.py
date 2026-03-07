@@ -1172,9 +1172,20 @@ def main():
     client_threads = []
     
     for i in range(args.N):
+        # Fiecare client primește propriul subdirector de date
+        # clean_data/client_0/, clean_data/client_1/, etc.
+        client_data = os.path.join(args.data_folder, f"client_{i}")
+        client_alt_data = os.path.join(args.alternative_data, f"client_{i}")
+        
+        # Fallback: dacă nu există structura per-client, folosește data_folder direct (legacy)
+        if not os.path.exists(client_data):
+            logger.warning(f"Client {i}: per-client data not found at {client_data}, using shared data_folder")
+            client_data = args.data_folder
+            client_alt_data = args.alternative_data
+        
         client = EnhancedFederatedClient(
-            i, server, args.data_folder,
-            args.alternative_data, args.R, 
+            i, server, client_data,
+            client_alt_data, args.R, 
             args.ROUNDS, args.strategy, model_path, use_template
         )
         clients.append(client)
