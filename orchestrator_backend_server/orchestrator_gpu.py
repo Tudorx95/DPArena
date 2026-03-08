@@ -316,6 +316,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         partition_script = f"""
 import os, shutil, random
 from pathlib import Path
+from collections import defaultdict
 
 data_dir = Path('{user_dir / 'clean_data'}')
 N = {config['N']}
@@ -324,12 +325,12 @@ random.seed(42)
 train_dir = data_dir / 'train'
 test_dir = data_dir / 'test'
 
-# Detectează clasele din structura de directoare
+# Detecteaza clasele din structura de directoare
 class_dirs = sorted([d.name for d in train_dir.iterdir() if d.is_dir()])
 num_classes = len(class_dirs)
 print(f'Detected {{num_classes}} classes: {{class_dirs}}')
 
-# Colectează toate imaginile per clasă
+# Colecteaza toate imaginile per clasa
 class_images = {{}}
 for class_name in class_dirs:
     class_dir = train_dir / class_name
@@ -337,7 +338,7 @@ for class_name in class_dirs:
     random.shuffle(imgs)
     class_images[class_name] = imgs
 
-# Creează directoare per client
+# Creeaza directoare per client
 for i in range(N):
     client_dir = data_dir / f'client_{{i}}'
     client_train = client_dir / 'train'
@@ -352,54 +353,60 @@ for i in range(N):
     for class_name in class_dirs:
         (client_train / class_name).mkdir(parents=True, exist_ok=True)
 
-# Non-IID partitioning:
-# Fiecare client i primește clasa dominantă i % num_classes
-# 80% din imaginile clasei dominante + 20% uniform din celelalte clase
-dominant_ratio = 0.8  # 80% dominant class
-other_ratio = 0.2     # 20% from other classes
+# Setarile conform lucrarii (Sectiunea 6.3: x% shared, (1-x)% disjoint)
+shared_ratio = 0.2    # 20% date distribuite uniform tuturor
+disjoint_ratio = 0.8  # 80% date specifice clasei dominante
 
-# Calculează câte imagini per client
-total_per_class = {{c: len(imgs) for c, imgs in class_images.items()}}
-imgs_per_client = sum(total_per_class.values()) // N  # ~5000 per client
+# 1. Asociem fiecare client cu o clasa dominanta
+client_dominant_class = {{i: class_dirs[i % num_classes] for i in range(N)}}
 
-# Track-uim ce imagini au fost deja alocate
-class_pointers = {{c: 0 for c in class_dirs}}
+# 2. Impartim imaginile globale in doua pool-uri pentru fiecare clasa
+disjoint_pools = {{}}
+shared_pools = {{}}
 
-for i in range(N):
-    dominant_class = class_dirs[i % num_classes]
-    dominant_count = int(imgs_per_client * dominant_ratio)
-    other_count_total = imgs_per_client - dominant_count
-    other_count_per_class = other_count_total // (num_classes - 1)
+for c in class_dirs:
+    imgs = class_images[c]
+    split_idx = int(len(imgs) * disjoint_ratio)
+    disjoint_pools[c] = imgs[:split_idx]
+    shared_pools[c] = imgs[split_idx:]
+
+client_allocations = defaultdict(list)
+
+# 3. Alocam datele Disjoint (Dominante)
+for c in class_dirs:
+    clients_with_c_dom = [i for i, dom_c in client_dominant_class.items() if dom_c == c]
     
-    client_train = data_dir / f'client_{{i}}' / 'train'
-    
-    # Adaugă imagini din clasa dominantă
-    ptr = class_pointers[dominant_class]
-    for img_name in class_images[dominant_class][ptr:ptr + dominant_count]:
-        src = train_dir / dominant_class / img_name
-        dst = client_train / dominant_class / img_name
+    if not clients_with_c_dom:
+        shared_pools[c].extend(disjoint_pools[c])
+        continue
+        
+    chunk_size = len(disjoint_pools[c]) // len(clients_with_c_dom)
+    for idx, client_id in enumerate(clients_with_c_dom):
+        start = idx * chunk_size
+        end = start + chunk_size if idx < len(clients_with_c_dom) - 1 else len(disjoint_pools[c])
+        client_allocations[client_id].extend([(c, img) for img in disjoint_pools[c][start:end]])
+
+# 4. Alocam datele Shared (Uniforme)
+for c in class_dirs:
+    chunk_size = len(shared_pools[c]) // N
+    for client_id in range(N):
+        start = client_id * chunk_size
+        end = start + chunk_size if client_id < N - 1 else len(shared_pools[c])
+        client_allocations[client_id].extend([(c, img) for img in shared_pools[c][start:end]])
+
+# 5. Copierea efectiva a fisierelor pe disc
+print(f'Partitioning data into {{N}} clients...')
+for client_id, allocations in client_allocations.items():
+    client_train = data_dir / f'client_{{client_id}}' / 'train'
+    for c, img_name in allocations:
+        src = train_dir / c / img_name
+        dst = client_train / c / img_name
         shutil.copy2(str(src), str(dst))
-    class_pointers[dominant_class] = ptr + dominant_count
-    
-    # Adaugă imagini din celelalte clase (uniform)
-    for class_name in class_dirs:
-        if class_name == dominant_class:
-            continue
-        ptr = class_pointers[class_name]
-        for img_name in class_images[class_name][ptr:ptr + other_count_per_class]:
-            src = train_dir / class_name / img_name
-            dst = client_train / class_name / img_name
-            shutil.copy2(str(src), str(dst))
-        class_pointers[class_name] = ptr + other_count_per_class
 
-print(f'Partitioned data into {{N}} clients (Non-IID, dominant_ratio={{dominant_ratio}})')
 for i in range(N):
     client_train = data_dir / f'client_{{i}}' / 'train'
-    dominant_class = class_dirs[i % num_classes]
-    per_class = {{}}
-    for c in class_dirs:
-        p = client_train / c
-        per_class[c] = len(list(p.glob('*'))) if p.exists() else 0
+    dominant_class = client_dominant_class[i]
+    per_class = {{c: len(list((client_train / c).glob('*'))) if (client_train / c).exists() else 0 for c in class_dirs}}
     total = sum(per_class.values())
     dom_pct = per_class[dominant_class] / total * 100 if total > 0 else 0
     print(f'  Client {{i}}: {{total}} imgs, dominant={{dominant_class}} ({{dom_pct:.0f}}%)')
