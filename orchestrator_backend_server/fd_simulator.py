@@ -512,13 +512,23 @@ class EnhancedFederatedServer:
         
         # Step 9: Agregare ponderată (Algorithm 1, line 20)
         # w_t+1 = w_t + Σ αi * Δi,t
-        # Echivalent: weighted average of client weights cu weights_fg
-        aggregated = [np.zeros_like(w, dtype=np.float64) for w in client_weights[0]]
-        for client_w, w in zip(client_weights, weights_fg):
-            for layer_idx, layer_w in enumerate(client_w):
-                aggregated[layer_idx] += layer_w.astype(np.float64) * w
+        # Folosim UPDATE-URILE ponderate, NU average pe weights complete
+        weighted_update = np.zeros_like(global_flat)
+        for idx in range(num_clients):
+            weighted_update += weights_fg[idx] * updates[idx]
         
-        return [agg.astype(client_weights[0][i].dtype) for i, agg in enumerate(aggregated)]
+        new_flat = global_flat + weighted_update
+        
+        # Reconstruct layer shapes
+        aggregated = []
+        offset = 0
+        for w in self.global_weights:
+            numel = w.size
+            layer_flat = new_flat[offset:offset + numel]
+            aggregated.append(layer_flat.reshape(w.shape).astype(w.dtype))
+            offset += numel
+        
+        return aggregated
     
     def _aggregate_weights_norm_clipping(self, client_weights, client_sizes):
         """
