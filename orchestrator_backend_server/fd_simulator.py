@@ -406,21 +406,21 @@ class EnhancedFederatedServer:
             aggregated.append(median_vals.astype(client_weights[0][layer_idx].dtype))
         return aggregated
     
-    def _aggregate_weights_foolsgold(self, client_weights, client_ids=None):
+    def _aggregate_weights_foolsgold(self, client_weights, client_sizes, client_ids=None):
         """
         FoolsGold — implementare fidelă conform Algorithm 1 din:
         Fung, Yoon & Beschastnikh, "Mitigating Sybils in Federated Learning Poisoning"
         (arXiv:1808.04866v5, RAID 2020)
         
         Pași conform paper-ului:
-        1. Acumulează istoricul update-urilor per client (Hi = Σ Δi,t)
-        2. Calculează cosine similarity pairwise pe istorice
+        1. Acumulează istoricul update-urilor per client (Hi = Σ Δi,t) pe layerele de clasificare (Feature Importance)
+        2. Calculează cosine similarity pairwise pe istoricele features-urilor importante
         3. vi = max_j(cs_ij) — maximul similarității per client
         4. Pardoning: dacă vj > vi → cs_ij *= vi/vj (protejează clienții onești)
         5. αi = 1 - max_j(cs_ij) — learning rate adaptat
         6. Rescalare: αi = αi / max_i(α) (cel mai onest → α=1)
         7. Logit: αi = κ(ln[αi/(1-αi)] + 0.5) — amplificare
-        8. Agregare ponderată: w_t+1 = w_t + Σ αi * Δi,t
+        8. Agregare ponderată directă: w_t+1 = w_t + Σ αi * Δi,t (FĂRĂ normalizare la sumă 1)
         """
         num_clients = len(client_weights)
         kappa = 1.0  # Confidence parameter (κ = 1 în evaluarea din paper)
@@ -429,24 +429,54 @@ class EnhancedFederatedServer:
             return self._aggregate_weights_fedavg(client_weights, [1] * num_clients)
         
         # Step 1: Calculează update-urile curente (Δi,t = weights_client - weights_global)
-        global_flat = np.concatenate([w.flatten().astype(np.float64) for w in self.global_weights])
-        
-        updates = []
-        for cw in client_weights:
-            flat = np.concatenate([w.flatten().astype(np.float64) for w in cw])
-            updates.append(flat - global_flat)
-        
-        # Step 2: Acumulează istoricul (Algorithm 1, line 3: Hi = Σ Δi,t)
         # Folosim client_id-urile reale pentru a urmări fiecare client consistent peste runde
         if client_ids is None:
             client_ids = list(range(num_clients))
+            
+        # Păstrăm update-urile integrale pentru agregarea finală
+        global_flat = np.concatenate([w.flatten().astype(np.float64) for w in self.global_weights])
+        updates_full = []
+        for cw in client_weights:
+            flat = np.concatenate([w.flatten().astype(np.float64) for w in cw])
+            updates_full.append(flat - global_flat)
+            
+        # EXTRA: Identificarea "Indicative Features" (Feature Importance - St)
+        # Paper: "The indicative features are found by measuring the magnitude of model 
+        # parameters in the output layer of the global model."
+        
+        # Identificăm ultimul layer cu ponderi (excludem bias-urile temporar pentru simplitate)
+        # De obicei, ultimele două structuri sunt W și b de la ultimul layer (clasificatorul)
+        # Ne uităm la ultimul tensor care are 2 dimensiuni (matrix W)
+        output_layer_idx = -1
+        for idx in reversed(range(len(self.global_weights))):
+            if len(self.global_weights[idx].shape) == 2:
+                output_layer_idx = idx
+                break
+                
+        # Dacă nu am găsit (ex: rețele atipice), fallback la ultimul weight array
+        if output_layer_idx == -1:
+            output_layer_idx = len(self.global_weights) - 1
+            
+        # Extragem update-urile doar pentru indicative features (Output layer)
+        # Acordăm importanță proporțională cu magnitudinea caracteristicilor (St-weighted)
+        St = np.abs(self.global_weights[output_layer_idx].astype(np.float64))
+        
+        updates_indicative = []
+        for cw in client_weights:
+            # Δ pentru output layer, ponderat cu St
+            delta_out = (cw[output_layer_idx].astype(np.float64) - 
+                        self.global_weights[output_layer_idx].astype(np.float64))
+            updates_indicative.append((delta_out * St).flatten())
+        
+        # Step 2: Acumulează istoricul (Algorithm 1, line 3: Hi = Σ Δi,t)
+        # DOAR pe features indicative
         
         for idx, cid in enumerate(client_ids):
             if cid not in self.foolsgold_histories:
-                self.foolsgold_histories[cid] = np.zeros_like(updates[idx])
-            self.foolsgold_histories[cid] += updates[idx]
+                self.foolsgold_histories[cid] = np.zeros_like(updates_indicative[idx])
+            self.foolsgold_histories[cid] += updates_indicative[idx]
         
-        # Step 3: Cosine similarity pairwise pe ISTORICE (nu pe update-uri curente!)
+        # Step 3: Cosine similarity pairwise pe ISTORICELE FEATURES INDICATIVE
         histories = [self.foolsgold_histories[cid] for cid in client_ids]
         h_norms = [np.linalg.norm(h) for h in histories]
         
@@ -498,24 +528,26 @@ class EnhancedFederatedServer:
         # Clip to [0, 1] range (paper: "any value exceeding 0-1 range is clipped")
         alpha = np.clip(alpha, 0.0, 1.0)
         
-        # Normalizare la sumă 1 pentru agregare ponderată
-        alpha_sum = np.sum(alpha)
-        if alpha_sum > 1e-10:
-            weights_fg = alpha / alpha_sum
-        else:
-            weights_fg = np.ones(num_clients) / num_clients
+        # ELIMINAT: Normalizarea la sumă 1.
+        # Paper-ul aplică direct alpha-ul fiecărui client, indiferent de suma totală.
+        weights_fg = alpha
         
-        logger.info(f"FoolsGold alpha (pre-norm): {[f'{a:.4f}' for a in alpha]}")
-        logger.info(f"FoolsGold weights: {[f'{w:.4f}' for w in weights_fg]}")
+        logger.info(f"FoolsGold output_layer_idx used: {output_layer_idx}")
+        logger.info(f"FoolsGold alpha (final lr): {[f'{a:.4f}' for a in alpha]}")
         logger.info(f"FoolsGold v (max pairwise sim): {[f'{vi:.4f}' for vi in v]}")
         logger.info(f"Malicious clients: {self.malicious_clients}")
         
         # Step 9: Agregare ponderată (Algorithm 1, line 20)
-        # w_t+1 = w_t + Σ αi * Δi,t
-        # Folosim UPDATE-URILE ponderate, NU average pe weights complete
+        # w_t+1 = w_t + Σ αi * (n_i/N) * Δi,t
+        # Folosim UPDATE-URILE integrale (toate layerele) dar ponderăm cu alpha obținut doar din output layer
+        # Ponderăm suplimentar cu proporția datelor (FedAvg base) pentru scale corect
+        total_size = sum(client_sizes)
         weighted_update = np.zeros_like(global_flat)
         for idx in range(num_clients):
-            weighted_update += weights_fg[idx] * updates[idx]
+            # weights_fg acționează ca un multiplicator (0-1) peste ponderea FedAvg.
+            # Astfel se evită explozia ponderilor global_weights.
+            client_weight = weights_fg[idx] * (client_sizes[idx] / total_size)
+            weighted_update += client_weight * updates_full[idx]
         
         new_flat = global_flat + weighted_update
         
@@ -607,7 +639,7 @@ class EnhancedFederatedServer:
         elif method == 'median':
             return self._aggregate_weights_median(client_weights)
         elif method == 'foolsgold':
-            return self._aggregate_weights_foolsgold(client_weights, client_ids)
+            return self._aggregate_weights_foolsgold(client_weights, client_sizes, client_ids)
         elif method == 'norm_clipping':
             return self._aggregate_weights_norm_clipping(client_weights, client_sizes)
         elif method == 'trimmed_mean_krum':

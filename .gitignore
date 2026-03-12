@@ -1,3 +1,5 @@
 # Docker secrets - DO NOT commit
 secrets/
 backend/__pycache__/
+orchestrator_backend_server/__pycache__/
+
