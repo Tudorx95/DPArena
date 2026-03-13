@@ -1,4 +1,4 @@
-# FL Simulator — Federated Learning Data Poisoning Attack Simulation Platform
+# DPArena - Simulation platform for data poisoning in federated Learning
 
 A full-stack platform for simulating **data poisoning attacks** within a **Federated Learning (FL)** environment. Users define neural network models (TensorFlow or PyTorch), configure attack scenarios, and run multi-GPU simulations — all through a Jupyter-inspired web interface with real-time progress tracking, result analysis, and export capabilities.
 
