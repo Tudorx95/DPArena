@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Settings, X, Plus, Trash2 } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Settings, X, Plus, Trash2, ChevronDown, Loader2 } from 'lucide-react';
 import CustomAggregationModal from './CustomAggregationModal';
+import CustomPoisoningModal from './CustomPoisoningModal';
 import { useTheme } from '../context/ThemeContext';
 
 export default function SimulationOptions({ onClose, onSave, initialConfig, apiUrl, token }) {
@@ -34,6 +35,78 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
     });
     const [showCustomModal, setShowCustomModal] = useState(false);
 
+    // Custom poisoning functions state (persisted in localStorage)
+    const [customPoisoningFunctions, setCustomPoisoningFunctions] = useState(() => {
+        try {
+            const saved = localStorage.getItem('custom_poisoning_functions');
+            return saved ? JSON.parse(saved) : [];
+        } catch { return []; }
+    });
+    const [showCustomPoisoningModal, setShowCustomPoisoningModal] = useState(false);
+
+    // Dropdown states
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const dropdownRef = useRef(null);
+
+    const [isPoisonDropdownOpen, setIsPoisonDropdownOpen] = useState(false);
+    const poisonDropdownRef = useRef(null);
+
+    const [isDeletingParams, setIsDeletingParams] = useState({ funcType: null, funcName: null });
+
+    useEffect(() => {
+        function handleClickOutside(event) {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setIsDropdownOpen(false);
+            }
+            if (poisonDropdownRef.current && !poisonDropdownRef.current.contains(event.target)) {
+                setIsPoisonDropdownOpen(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const predefinedAggregationOptions = [
+        { value: 'fedavg', label: 'FedAvg - Standard (vulnerable to poisoning)' },
+        { value: 'krum', label: 'Krum - Selects closest update (99% attack elimination)' },
+        { value: 'trimmed_mean', label: 'Trimmed Mean - Removes extremes (resistant to label-flipping)' },
+        { value: 'median', label: 'Median - Resistant to 20% malicious clients' },
+        { value: 'foolsgold', label: 'FoolsGold - Sybil/Label Flip defense' },
+        { value: 'norm_clipping', label: 'Norm Clipping - Clips update norms (backdoor defense)' },
+        { value: 'trimmed_mean_krum', label: 'Trimmed Mean + Krum - Hybrid approach' },
+        { value: 'random', label: 'Random - Randomizes between Krum and Trimmed Mean' }
+    ];
+
+    const predefinedPoisoningOptions = [
+        { value: 'label_flip', label: '🔄 Label Flip (dirty-label)' },
+        { value: 'backdoor_badnets', label: '🎯 BadNets Backdoor' },
+        { value: 'backdoor_blended', label: '🌀 Blended Backdoor' },
+        { value: 'backdoor_sig', label: '📡 SIG Backdoor (sinusoidal)' },
+        { value: 'backdoor_trojan', label: '🏴 Trojan Backdoor (watermark)' },
+        { value: 'semantic_backdoor', label: '🎨 Semantic Backdoor' },
+        { value: 'backdoor_edge_case', label: '🔀 Edge-case Backdoor' }
+    ];
+
+    const getCurrentAggregationLabel = () => {
+        const val = config.data_poison_protection;
+        const builtin = predefinedAggregationOptions.find(opt => opt.value === val);
+        if (builtin) return builtin.label;
+        if (val?.startsWith('@')) {
+            return `🧩 ${val} (custom)`;
+        }
+        return val;
+    };
+
+    const getCurrentPoisoningLabel = () => {
+        const val = config.poison_operation;
+        const builtin = predefinedPoisoningOptions.find(opt => opt.value === val);
+        if (builtin) return builtin.label;
+        if (val?.startsWith('@')) {
+            return `🧪 ${val} (custom)`;
+        }
+        return val;
+    };
+
     const handleChange = (field, value) => {
         setConfig(prev => ({
             ...prev,
@@ -55,20 +128,60 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
         setShowCustomModal(false);
     };
 
-    const handleRemoveCustomFunction = (funcName) => {
-        const updated = customFunctions.filter(f => f.name !== funcName);
-        setCustomFunctions(updated);
-        localStorage.setItem('custom_aggregation_functions', JSON.stringify(updated));
-        // If the removed function was selected, reset to fedavg
-        if (config.data_poison_protection === `@${funcName}`) {
-            handleChange('data_poison_protection', 'fedavg');
-        }
+    const handleRemoveCustomFunction = async (funcName) => {
+        setIsDeletingParams({ funcType: 'aggregation', funcName });
+        try {
+            const res = await fetch(`${apiUrl}/api/custom-function/aggregation/${funcName}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const updated = customFunctions.filter(f => f.name !== funcName);
+                setCustomFunctions(updated);
+                localStorage.setItem('custom_aggregation_functions', JSON.stringify(updated));
+                if (config.data_poison_protection === `@${funcName}`) {
+                    handleChange('data_poison_protection', 'fedavg');
+                }
+            } else {
+                console.error("Failed to delete aggregation function");
+            }
+        } catch (e) { console.error(e); }
+        finally { setIsDeletingParams({ funcType: null, funcName: null }); }
+    };
+
+    const handleAddCustomPoisoningFunction = (funcData) => {
+        const updated = [...customPoisoningFunctions.filter(f => f.name !== funcData.name), funcData];
+        setCustomPoisoningFunctions(updated);
+        localStorage.setItem('custom_poisoning_functions', JSON.stringify(updated));
+        handleChange('poison_operation', `@${funcData.name}`);
+        setShowCustomPoisoningModal(false);
+    };
+
+    const handleRemoveCustomPoisoningFunction = async (funcName) => {
+        setIsDeletingParams({ funcType: 'poisoning', funcName });
+        try {
+            const res = await fetch(`${apiUrl}/api/custom-function/poisoning/${funcName}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const updated = customPoisoningFunctions.filter(f => f.name !== funcName);
+                setCustomPoisoningFunctions(updated);
+                localStorage.setItem('custom_poisoning_functions', JSON.stringify(updated));
+                if (config.poison_operation === `@${funcName}`) {
+                    handleChange('poison_operation', 'label_flip');
+                }
+            } else {
+                console.error("Failed to delete poisoning function");
+            }
+        } catch (e) { console.error(e); }
+        finally { setIsDeletingParams({ funcType: null, funcName: null }); }
     };
 
     // Determine which sub-parameters to show based on selected operation
     const op = config.poison_operation;
     const isBackdoor = op.startsWith('backdoor_');
-    const showTargetClass = op === 'label_flip' || isBackdoor;
+    const showTargetClass = op === 'label_flip' || isBackdoor || op.startsWith('@');
     const showNoFlip = isBackdoor;
     const showTriggerType = op === 'backdoor_badnets';
     const showPatternType = op === 'backdoor_blended';
@@ -80,7 +193,7 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto sidebar-scroll">
-                <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 flex items-center justify-between">
+                <div className="sticky top-0 z-50 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <Settings className="w-6 h-6 text-blue-600 dark:text-blue-400" />
                         <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100">Simulation Options</h2>
@@ -198,28 +311,103 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
                     {/* Data Poisoning Parameters */}
                     <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-lg border border-red-200 dark:border-red-800">
                         <h3 className="text-lg font-semibold text-red-900 dark:text-red-300 mb-4">Data Poisoning Attack Parameters</h3>
-                        <div className="grid grid-cols-3 gap-4">
-                            <div>
+                        <div className="grid grid-cols-12 gap-4">
+                            <div className="col-span-12 sm:col-span-6">
                                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                                     Poisoning Operation
                                 </label>
-                                <select
-                                    value={config.poison_operation}
-                                    onChange={(e) => handleChange('poison_operation', e.target.value)}
-                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                                >
-                                    <option value="label_flip">🔄 Label Flip (dirty-label)</option>
-                                    <option value="backdoor_badnets">🎯 BadNets Backdoor</option>
-                                    <option value="backdoor_blended">🌀 Blended Backdoor</option>
-                                    <option value="backdoor_sig">📡 SIG Backdoor (sinusoidal)</option>
-                                    <option value="backdoor_trojan">🏴 Trojan Backdoor (watermark)</option>
-                                    <option value="semantic_backdoor">🎨 Semantic Backdoor</option>
-                                    <option value="backdoor_edge_case">🔀 Edge-case Backdoor</option>
-                                </select>
+                                <div className="flex items-center gap-2">
+                                    <div className="relative flex-1 min-w-0" ref={poisonDropdownRef}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsPoisonDropdownOpen(!isPoisonDropdownOpen)}
+                                            className="w-full text-left px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 flex justify-between items-center min-w-0"
+                                        >
+                                            <span className="truncate flex-1 min-w-0 pr-4">{getCurrentPoisoningLabel()}</span>
+                                            <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isPoisonDropdownOpen ? 'rotate-180' : ''}`} />
+                                        </button>
+
+                                        {isPoisonDropdownOpen && (
+                                            <div className="absolute z-40 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-xl max-h-56 overflow-y-auto sidebar-scroll">
+                                                {predefinedPoisoningOptions.map(opt => (
+                                                    <button
+                                                        key={opt.value}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            handleChange('poison_operation', opt.value);
+                                                            setIsPoisonDropdownOpen(false);
+                                                        }}
+                                                        className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${config.poison_operation === opt.value ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 font-medium' : 'text-gray-700 dark:text-gray-200'}`}
+                                                    >
+                                                        {opt.label}
+                                                    </button>
+                                                ))}
+
+                                                {customPoisoningFunctions.length > 0 && (
+                                                    <>
+                                                        <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-t border-b border-gray-200 dark:border-gray-700 uppercase tracking-wider">
+                                                            ── Custom Operations ──
+                                                        </div>
+                                                        {customPoisoningFunctions.map(fn => (
+                                                            <button
+                                                                key={fn.name}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    handleChange('poison_operation', `@${fn.name}`);
+                                                                    setIsPoisonDropdownOpen(false);
+                                                                }}
+                                                                className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 ${config.poison_operation === `@${fn.name}` ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 font-medium' : 'text-gray-700 dark:text-gray-200'}`}
+                                                            >
+                                                                <span>🧪</span> @{fn.name} (custom)
+                                                            </button>
+                                                        ))}
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowCustomPoisoningModal(true)}
+                                        className="flex-shrink-0 p-2 bg-orange-100 hover:bg-orange-200 dark:bg-orange-900/40 dark:hover:bg-orange-900/60 text-orange-700 dark:text-orange-300 rounded-lg transition-colors"
+                                        title="Add custom data poisoning function"
+                                    >
+                                        <Plus className="w-5 h-5" />
+                                    </button>
+                                </div>
                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Type of poisoning attack</p>
+
+                                {/* List of custom poisoning functions with remove buttons */}
+                                {customPoisoningFunctions.length > 0 && (
+                                    <div className="mt-3">
+                                        <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Custom operations:</p>
+                                        <div className="space-y-1 max-h-36 overflow-y-auto sidebar-scroll pr-1">
+                                            {customPoisoningFunctions.map(fn => (
+                                                <div key={fn.name} className="flex items-center justify-between px-3 py-1.5 bg-white dark:bg-gray-700 rounded border border-gray-200 dark:border-gray-600">
+                                                    <span className="text-sm font-mono text-orange-700 dark:text-orange-300">
+                                                        @{fn.name}
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRemoveCustomPoisoningFunction(fn.name)}
+                                                        disabled={isDeletingParams.funcName === fn.name && isDeletingParams.funcType === 'poisoning'}
+                                                        className="p-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors disabled:opacity-50"
+                                                        title={`Remove @${fn.name}`}
+                                                    >
+                                                        {isDeletingParams.funcName === fn.name && isDeletingParams.funcType === 'poisoning' ? (
+                                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                        ) : (
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                        )}
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
-                            <div>
+                            <div className="col-span-6 sm:col-span-3">
                                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                                     Intensity
                                 </label>
@@ -236,7 +424,7 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Attack intensity (0.01-1.0)</p>
                             </div>
 
-                            <div>
+                            <div className="col-span-6 sm:col-span-3">
                                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                                     Percentage
                                 </label>
@@ -415,30 +603,55 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
                                 Aggregation Method
                             </label>
                             <div className="flex items-center gap-2">
-                                <select
-                                    value={config.data_poison_protection}
-                                    onChange={(e) => handleChange('data_poison_protection', e.target.value)}
-                                    className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                                >
-                                    <option value="fedavg">FedAvg - Standard (vulnerable to poisoning)</option>
-                                    <option value="krum">Krum - Selects closest update (99% attack elimination)</option>
-                                    <option value="trimmed_mean">Trimmed Mean - Removes extremes (resistant to label-flipping)</option>
-                                    <option value="median">Median - Resistant to 20% malicious clients</option>
-                                    <option value="foolsgold">FoolsGold - Sybil/Label Flip defense</option>
-                                    <option value="norm_clipping">Norm Clipping - Clips update norms (backdoor defense)</option>
-                                    <option value="trimmed_mean_krum">Trimmed Mean + Krum - Hybrid approach</option>
-                                    <option value="random">Random - Randomizes between Krum and Trimmed Mean</option>
-                                    {/* Custom user-defined aggregation functions */}
-                                    {customFunctions.length > 0 && (
-                                        <optgroup label="── Custom Functions ──">
-                                            {customFunctions.map(fn => (
-                                                <option key={fn.name} value={`@${fn.name}`}>
-                                                    🧩 @{fn.name} (custom)
-                                                </option>
+                                <div className="relative flex-1 min-w-0" ref={dropdownRef}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                                        className="w-full text-left px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 flex justify-between items-center min-w-0"
+                                    >
+                                        <span className="truncate flex-1 min-w-0 pr-4">{getCurrentAggregationLabel()}</span>
+                                        <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                                    </button>
+
+                                    {isDropdownOpen && (
+                                        <div className="absolute z-40 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-xl max-h-56 overflow-y-auto sidebar-scroll">
+                                            {predefinedAggregationOptions.map(opt => (
+                                                <button
+                                                    key={opt.value}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        handleChange('data_poison_protection', opt.value);
+                                                        setIsDropdownOpen(false);
+                                                    }}
+                                                    className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${config.data_poison_protection === opt.value ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 font-medium' : 'text-gray-700 dark:text-gray-200'}`}
+                                                >
+                                                    {opt.label}
+                                                </button>
                                             ))}
-                                        </optgroup>
+
+                                            {customFunctions.length > 0 && (
+                                                <>
+                                                    <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 border-t border-b border-gray-200 dark:border-gray-700 uppercase tracking-wider">
+                                                        ── Custom Functions ──
+                                                    </div>
+                                                    {customFunctions.map(fn => (
+                                                        <button
+                                                            key={fn.name}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                handleChange('data_poison_protection', `@${fn.name}`);
+                                                                setIsDropdownOpen(false);
+                                                            }}
+                                                            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 ${config.data_poison_protection === `@${fn.name}` ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 font-medium' : 'text-gray-700 dark:text-gray-200'}`}
+                                                        >
+                                                            <span>🧩</span> @{fn.name} (custom)
+                                                        </button>
+                                                    ))}
+                                                </>
+                                            )}
+                                        </div>
                                     )}
-                                </select>
+                                </div>
                                 <button
                                     type="button"
                                     onClick={() => setShowCustomModal(true)}
@@ -455,23 +668,30 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
 
                         {/* List of custom functions with remove buttons */}
                         {customFunctions.length > 0 && (
-                            <div className="mt-3 space-y-1">
-                                <p className="text-xs font-medium text-gray-600 dark:text-gray-400">Custom functions:</p>
-                                {customFunctions.map(fn => (
-                                    <div key={fn.name} className="flex items-center justify-between px-3 py-1.5 bg-white dark:bg-gray-700 rounded border border-gray-200 dark:border-gray-600">
-                                        <span className="text-sm font-mono text-purple-700 dark:text-purple-300">
-                                            @{fn.name}
-                                        </span>
-                                        <button
-                                            type="button"
-                                            onClick={() => handleRemoveCustomFunction(fn.name)}
-                                            className="p-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
-                                            title={`Remove @${fn.name}`}
-                                        >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
-                                    </div>
-                                ))}
+                            <div className="mt-3">
+                                <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Custom functions:</p>
+                                <div className="space-y-1 max-h-36 overflow-y-auto sidebar-scroll pr-1">
+                                    {customFunctions.map(fn => (
+                                        <div key={fn.name} className="flex items-center justify-between px-3 py-1.5 bg-white dark:bg-gray-700 rounded border border-gray-200 dark:border-gray-600">
+                                            <span className="text-sm font-mono text-purple-700 dark:text-purple-300">
+                                                @{fn.name}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleRemoveCustomFunction(fn.name)}
+                                                disabled={isDeletingParams.funcName === fn.name && isDeletingParams.funcType === 'aggregation'}
+                                                className="p-1 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors disabled:opacity-50"
+                                                title={`Remove @${fn.name}`}
+                                            >
+                                                {isDeletingParams.funcName === fn.name && isDeletingParams.funcType === 'aggregation' ? (
+                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                ) : (
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                )}
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
 
@@ -504,6 +724,16 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
                     <CustomAggregationModal
                         onClose={() => setShowCustomModal(false)}
                         onSave={handleAddCustomFunction}
+                        apiUrl={apiUrl}
+                        token={token}
+                    />
+                )}
+
+                {/* Custom Poisoning Modal */}
+                {showCustomPoisoningModal && (
+                    <CustomPoisoningModal
+                        onClose={() => setShowCustomPoisoningModal(false)}
+                        onSave={handleAddCustomPoisoningFunction}
                         apiUrl={apiUrl}
                         token={token}
                     />

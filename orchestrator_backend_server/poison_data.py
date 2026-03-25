@@ -23,6 +23,8 @@ Referințe:
 """
 
 import os
+import sys
+import importlib.util
 import argparse
 import shutil
 import numpy as np
@@ -605,7 +607,43 @@ def apply_poisoning(
                     image = Image.open(img_path).convert('RGB')
                     
                     # Aplică atacul
-                    if operation == 'label_flip':
+                    if operation.startswith('@'):
+                        func_name = operation[1:]
+                        script_path = Path(input_dir).parent / f"{func_name}.py"
+                        if not script_path.exists():
+                            print(f"ERROR: Custom poisoning script not found: {script_path}", file=sys.stderr)
+                            sys.exit(1)
+                            
+                        try:
+                            spec = importlib.util.spec_from_file_location(func_name, str(script_path))
+                            module = importlib.util.module_from_spec(spec)
+                            spec.loader.exec_module(module)
+                            
+                            if not hasattr(module, 'custom_poison'):
+                                print(f"ERROR: Script {func_name}.py must define 'custom_poison(image, class_names, current_class, ...)'", file=sys.stderr)
+                                sys.exit(1)
+                                
+                            image, new_class = module.custom_poison(
+                                image=image,
+                                class_names=list(class_names),
+                                current_class=class_name,
+                                target_class=target_class,
+                                intensity=intensity,
+                                percentage=percentage
+                            )
+                            
+                            if new_class != class_name:
+                                new_path = os.path.join(subset_dir, str(new_class), img_file)
+                                os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                                shutil.move(img_path, new_path)
+                                
+                        except Exception as e:
+                            print(f"ERROR: Custom poisoning execution failed for {func_name}: {e}\nHalting simulation.", file=sys.stderr)
+                            sys.exit(1)
+                        total_poisoned += 1
+                        continue
+
+                    elif operation == 'label_flip':
                         new_class = label_flip(class_names, class_name, target_class)
                         new_path = os.path.join(subset_dir, str(new_class), img_file)
                         shutil.move(img_path, new_path)

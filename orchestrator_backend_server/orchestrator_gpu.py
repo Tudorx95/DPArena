@@ -883,6 +883,62 @@ def upload_aggregation():
         "path": str(file_path)
     }), 200
 
+@app.route("/upload-poisoning", methods=["POST"])
+def upload_poisoning():
+    """Receive and save a custom poisoning function file"""
+    token = request.headers.get("Authorization")
+    if not token or not token.startswith("Bearer token-"):
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    data = request.json
+    user_id = data.get("user_id", 1)
+    function_name = data.get("function_name")
+    code = data.get("code")
+    
+    if not function_name or not code:
+        return jsonify({"error": "Missing function_name or code"}), 400
+    
+    # Save to user directory
+    user_dir = BASE_DIR / f"user_{user_id}"
+    user_dir.mkdir(parents=True, exist_ok=True)
+    
+    file_path = user_dir / f"{function_name}.py"
+    with open(file_path, 'w') as f:
+        f.write(code)
+    
+    app.logger.info(f"Custom poisoning '{function_name}' saved to {file_path}")
+    
+    return jsonify({
+        "status": "success",
+        "function_name": function_name,
+        "path": str(file_path)
+    }), 200
+
+@app.route("/custom-function/<func_type>/<func_name>", methods=["DELETE"])
+def delete_custom_function(func_type, func_name):
+    """Delete a custom function (aggregation or poisoning) from the filesystem"""
+    token = request.headers.get("Authorization")
+    if not token or not token.startswith("Bearer token-"):
+        return jsonify({"error": "Unauthorized"}), 403
+        
+    user_id = request.args.get("user_id", 1)
+    
+    # We store both types in the same user directory as `<func_name>.py`
+    user_dir = BASE_DIR / f"user_{user_id}"
+    file_path = user_dir / f"{func_name}.py"
+    
+    if file_path.exists():
+        try:
+            os.remove(file_path)
+            app.logger.info(f"Deleted custom {func_type} function '{func_name}' at {file_path}")
+            return jsonify({"status": "success", "message": f"Deleted {func_name}.py"}), 200
+        except Exception as e:
+            app.logger.error(f"Failed to delete custom {func_type} function '{func_name}': {e}")
+            return jsonify({"error": f"Failed to delete file: {e}"}), 500
+    else:
+        app.logger.warning(f"File not found for deletion: {file_path}")
+        return jsonify({"error": "Function not found"}), 404
+
 @app.route("/simulate", methods=["POST"])
 def simulate():
     app.logger.info(f"Received simulate request from {request.remote_addr}")

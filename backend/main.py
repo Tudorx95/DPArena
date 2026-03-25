@@ -414,6 +414,10 @@ class CustomAggregationUpload(BaseModel):
     function_name: str
     code: str
 
+class CustomPoisoningUpload(BaseModel):
+    function_name: str
+    code: str
+
 
 def upload_aggregation_to_orchestrator(user_id: int, function_name: str, code: str):
     """Upload a custom aggregation function to the orchestrator server"""
@@ -504,6 +508,139 @@ async def upload_custom_aggregation(
         "function_name": sanitized_name,
         "message": f"Custom aggregation function '@{sanitized_name}' validated and uploaded."
     }
+
+def upload_poisoning_to_orchestrator(user_id: int, function_name: str, code: str):
+    """Upload a custom poisoning function to the orchestrator server"""
+    token = login_to_orchestrator()
+    if not token:
+        raise HTTPException(status_code=503, detail="Cannot connect to orchestrator server")
+    
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.post(
+            f"{ORCHESTRATOR_URL}/upload-poisoning",
+            json={
+                "user_id": user_id,
+                "function_name": function_name,
+                "code": code
+            },
+            headers=headers,
+            timeout=15
+        )
+        
+        if response.status_code == 200:
+            logger.info(f"Custom poisoning '{function_name}' uploaded to orchestrator")
+            return response.json()
+        else:
+            logger.error(f"Orchestrator error uploading poisoning: {response.text}")
+            raise HTTPException(status_code=500, detail=f"Orchestrator error: {response.text}")
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Orchestrator request timed out")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading poisoning to orchestrator: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@app.post("/api/upload-poisoning")
+async def upload_custom_poisoning(
+    upload: CustomPoisoningUpload,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Validate and upload a custom poisoning function.
+    Validates Python syntax with ast.parse() and checks for custom_poison function.
+    """
+    # Sanitize function name
+    import re
+    sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '', upload.function_name.lower())
+    if len(sanitized_name) < 2:
+        raise HTTPException(status_code=400, detail="Function name must be at least 2 alphanumeric characters.")
+    
+    # Validate Python syntax
+    try:
+        tree = ast.parse(upload.code)
+    except SyntaxError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Python syntax error at line {e.lineno}: {e.msg}"
+        )
+    
+    # Check that the code contains a function named 'custom_poison'
+    func_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
+    if 'custom_poison' not in func_names:
+        raise HTTPException(
+            status_code=400,
+            detail='Code must contain a function named "custom_poison".'
+        )
+    
+    # Run OpenGrep security scan
+    logger.info(f"Running opengrep security scan on custom poisoning '{sanitized_name}'...")
+    scan_result = run_opengrep_scan(upload.code)
+    if not scan_result.get("passed", True):
+        findings_text = "\n".join(scan_result.get("findings", []))
+        logger.warning(f"Security scan failed for '{sanitized_name}': {findings_text}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Security scan failed. Unsafe code detected:\n{findings_text}"
+        )
+    
+    # Upload to orchestrator
+    result = upload_poisoning_to_orchestrator(
+        user_id=current_user.id,
+        function_name=sanitized_name,
+        code=upload.code
+    )
+    
+    return {
+        "status": "success",
+        "function_name": sanitized_name,
+        "message": f"Custom poisoning function '@{sanitized_name}' validated and uploaded."
+    }
+
+@app.delete("/api/custom-function/{func_type}/{func_name}")
+async def delete_custom_function(
+    func_type: str,
+    func_name: str,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Delete a custom function (aggregation or poisoning) from the orchestrator.
+    """
+    if func_type not in ["aggregation", "poisoning"]:
+        raise HTTPException(status_code=400, detail="Invalid function type")
+        
+    token = login_to_orchestrator()
+    if not token:
+        raise HTTPException(status_code=503, detail="Cannot connect to orchestrator server")
+        
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        # The orchestrator should have a matching DELETE endpoint
+        response = requests.delete(
+            f"{ORCHESTRATOR_URL}/custom-function/{func_type}/{func_name}?user_id={current_user.id}",
+            headers=headers,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            logger.info(f"Custom {func_type} '{func_name}' deleted from orchestrator")
+            return response.json()
+        elif response.status_code == 404:
+            # Maybe it was already deleted or doesn't exist, which is fine
+            return {"status": "success", "message": "Function not found or already deleted"}
+        else:
+            logger.error(f"Orchestrator error deleting function: {response.text}")
+            raise HTTPException(status_code=500, detail=f"Orchestrator error: {response.text}")
+            
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Orchestrator request timed out")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting function from orchestrator: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 
 # Orchestrator communication functions

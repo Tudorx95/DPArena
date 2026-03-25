@@ -3,34 +3,47 @@ import { X, Check, AlertTriangle, Loader2 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
 const TEMPLATE_CODE = `import numpy as np
+import random
+from PIL import Image
 
-def custom_aggregate(client_weights, client_sizes, global_weights, num_malicious, **kwargs):
+def custom_poison(image: Image.Image, class_names: list, current_class: str, target_class: str = None, intensity: float = 0.1, percentage: float = 0.1, **kwargs):
     """
-    Custom aggregation function for Federated Learning.
+    Custom data poisoning function.
+
+    WARNING: Ensure this function is synchronized with the dataset format.
+    If you assume specific image sizes or structures, the operation may fail 
+    and halt the simulation.
 
     Args:
-        client_weights: list of weight arrays from each client
-                        Each element is a list of numpy arrays (one per layer)
-        client_sizes:   list of dataset sizes per client
-        global_weights: current global model weights (list of numpy arrays)
-        num_malicious:  number of expected malicious clients
-
+        image: Original PIL Image to be poisoned.
+        class_names: List of all available classes in the dataset.
+        current_class: The original class of the image.
+        target_class: Target class for targeted attacks (optional).
+        intensity: Attack intensity (0.0 to 1.0) defining how much the image is altered.
+        percentage: The percentage parameter from the UI.
+        
     Returns:
-        aggregated_weights: list of numpy arrays (same structure as client_weights[0])
+        tuple: (poisoned_image, new_class)
     """
-    # Example: FedAvg (weighted average based on dataset size)
-    total_size = sum(client_sizes)
-    avg_weights = [np.zeros_like(w, dtype=np.float64) for w in client_weights[0]]
-
-    for cw, size in zip(client_weights, client_sizes):
-        weight = size / total_size
-        for i, w in enumerate(cw):
-            avg_weights[i] += w * weight
-
-    return [avg_weights[i].astype(w.dtype) for i, w in enumerate(client_weights[0])]
+    # Example 1: Label Flip logic
+    new_class = target_class if target_class and target_class in class_names else current_class
+    if new_class == current_class:
+        available = [c for c in class_names if c != current_class]
+        if available:
+            new_class = random.choice(available)
+            
+    # Example 2: Add random noise based on intensity
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
+        
+    img_array = np.array(image, dtype=np.float32)
+    noise = np.random.normal(0, 25 * intensity, img_array.shape)
+    poisoned_array = np.clip(img_array + noise, 0, 255).astype(np.uint8)
+    
+    return Image.fromarray(poisoned_array), new_class
 `;
 
-export default function CustomAggregationModal({ onClose, onSave, apiUrl, token }) {
+export default function CustomPoisoningModal({ onClose, onSave, apiUrl, token }) {
     const [functionName, setFunctionName] = useState('');
     const [code, setCode] = useState(TEMPLATE_CODE);
     const [error, setError] = useState(null);
@@ -58,16 +71,16 @@ export default function CustomAggregationModal({ onClose, onSave, apiUrl, token 
             return;
         }
 
-        // Basic client-side check: code must contain "def custom_aggregate"
-        if (!code.includes('def custom_aggregate')) {
-            setError('The code must contain a function named "custom_aggregate".');
+        // Basic client-side check: code must contain "def custom_poison"
+        if (!code.includes('def custom_poison')) {
+            setError('The code must contain a function named "custom_poison".');
             return;
         }
 
         setIsValidating(true);
 
         try {
-            const response = await fetch(`${apiUrl}/api/upload-aggregation`, {
+            const response = await fetch(`${apiUrl}/api/upload-poisoning`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -105,14 +118,34 @@ export default function CustomAggregationModal({ onClose, onSave, apiUrl, token 
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4">
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col overflow-hidden border border-gray-200 dark:border-gray-700">
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20">
                     <div>
-                        <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100">
-                            ⚙️ Define Custom Aggregation Function
+                        <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                            🧪 Define Custom Poisoning Function
                         </h2>
                         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                            Write your own aggregation method in Python. It will be validated and uploaded to the server.
+                            Write your custom data poisoning operation in Python. It will be validated and executed during the simulation.
                         </p>
+                    </div>
+                </div>
+
+                {/* Important Warning */}
+                <div className="bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400 p-4 shrink-0 mx-6 mt-4 rounded-r-md">
+                    <div className="flex">
+                        <div className="flex-shrink-0">
+                            <AlertTriangle className="h-5 w-5 text-yellow-400" aria-hidden="true" />
+                        </div>
+                        <div className="ml-3">
+                            <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                                Critical Warning
+                            </h3>
+                            <div className="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
+                                <p>
+                                    This function must be perfectly synchronized with the dataset structure (e.g., image dimensions, tensor types).
+                                    If the poisoning operation encounters errors or generates incompatible output, <strong>the simulation will halt automatically</strong>.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -125,11 +158,11 @@ export default function CustomAggregationModal({ onClose, onSave, apiUrl, token 
                         type="text"
                         value={functionName}
                         onChange={(e) => setFunctionName(e.target.value)}
-                        placeholder="e.g., my_trimmed_krum"
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400"
+                        placeholder="e.g., custom_noise_flip"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400"
                     />
                     <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                        This name will appear as <span className="font-mono text-purple-600 dark:text-purple-400">@{sanitizeName(functionName) || 'function_name'}</span> in the aggregation methods list.
+                        This name will appear as <span className="font-mono text-purple-600 dark:text-purple-400">@{sanitizeName(functionName) || 'function_name'}</span> in the poisoning operations list.
                     </p>
                 </div>
 
