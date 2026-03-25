@@ -481,6 +481,17 @@ async def upload_custom_aggregation(
             detail='Code must contain a function named "custom_aggregate".'
         )
     
+    # Run OpenGrep security scan
+    logger.info(f"Running opengrep security scan on custom aggregation '{sanitized_name}'...")
+    scan_result = run_opengrep_scan(upload.code)
+    if not scan_result.get("passed", True):
+        findings_text = "\n".join(scan_result.get("findings", []))
+        logger.warning(f"Security scan failed for '{sanitized_name}': {findings_text}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Security scan failed. Unsafe code detected:\n{findings_text}"
+        )
+    
     # Upload to orchestrator
     result = upload_aggregation_to_orchestrator(
         user_id=current_user.id,
