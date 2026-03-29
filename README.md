@@ -162,7 +162,76 @@ pip install -r requirements.txt
 
 #### 3. Set up Conda environments
 
-Create separate Conda environments for each supported framework:
+The project includes **automated setup scripts** that create fully configured Conda environments with all required dependencies, correct versions, and CUDA support.
+
+##### Option A — Automated setup (recommended)
+
+Copy the setup scripts from the project root to the GPU server and run them:
+
+```bash
+# Make the scripts executable
+chmod +x setup_tensorflow_env.sh setup_pytorch_env.sh
+
+# Create the TensorFlow environment (fl_tensorflow)
+./setup_tensorflow_env.sh
+
+# Create the PyTorch environment (fl_pytorch)
+./setup_pytorch_env.sh
+```
+
+Each script will:
+1. Create a dedicated Conda environment (`fl_tensorflow` / `fl_pytorch`) with Python 3.10
+2. Install the ML framework with CUDA support
+3. Install all scientific, data-processing, and networking dependencies (NumPy, Pandas, Matplotlib, scikit-learn, Flask, etc.)
+4. Run verification checks to confirm the installation and GPU visibility
+
+<details>
+<summary><strong>setup_tensorflow_env.sh</strong> — packages installed</summary>
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `tensorflow[and-cuda]` | 2.15.1 | TensorFlow with bundled CUDA 12.2 |
+| `numpy` | 1.26.4 | Numerical computing |
+| `pandas` | 2.1.4 | Data manipulation |
+| `matplotlib` | 3.8.4 | Plotting |
+| `scikit-learn` | 1.3.2 | ML utilities & metrics |
+| `Pillow` | 10.4.0 | Image processing |
+| `scipy` | 1.11.4 | Scientific computing |
+| `requests` | 2.32.3 | HTTP client |
+| `flask` | 3.0.3 | Orchestrator API |
+| `flask-cors` | 4.0.1 | CORS middleware |
+| `h5py` | 3.11.0 | HDF5 model storage |
+| `tensorflow-datasets` | 4.9.6 | TF dataset utilities |
+
+> **Note:** Requires NVIDIA driver version ≥ 535 for CUDA 12.2 compatibility.
+
+</details>
+
+<details>
+<summary><strong>setup_pytorch_env.sh</strong> — packages installed</summary>
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `torch` | 2.1.0 | PyTorch (CUDA 12.1 wheel) |
+| `torchvision` | 0.16.0 | Image models & transforms |
+| `torchaudio` | 2.1.0 | Audio processing |
+| `numpy` | 1.26.0 | Numerical computing |
+| `pandas` | 2.1.0 | Data manipulation |
+| `matplotlib` | 3.8.0 | Plotting |
+| `scikit-learn` | 1.3.0 | ML utilities & metrics |
+| `Pillow` | 10.1.0 | Image processing |
+| `scipy` | 1.11.0 | Scientific computing |
+| `requests` | 2.31.0 | HTTP client |
+| `flask` | 3.0.0 | Orchestrator API |
+| `flask-cors` | 4.0.0 | CORS middleware |
+| `torchmetrics` | 1.2.0 | Training metrics |
+| `tensorboard` | 2.15.0 | Training visualization |
+
+</details>
+
+##### Option B — Manual setup
+
+If you prefer to install packages manually:
 
 ```bash
 # TensorFlow environment
@@ -421,6 +490,8 @@ Collected **per round** and **per scenario** (Clean / Clean+Defense / Poisoned /
 BachelorThesisProject/
 │
 ├── docker-compose.yaml              # Multi-container setup (DB + Backend + Frontend)
+├── setup_tensorflow_env.sh          # Automated Conda env setup — TensorFlow + CUDA
+├── setup_pytorch_env.sh             # Automated Conda env setup — PyTorch + CUDA
 ├── secrets/                          # Docker secrets (gitignored)
 │   ├── db_password.txt
 │   ├── secret_key.txt
