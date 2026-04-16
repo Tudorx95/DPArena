@@ -529,7 +529,7 @@ if __name__ == "__main__":
             f.write(f"   {metric_name}: {value:.4f}\n")
     
     # STEP 6: Antrenare
-    history = train_neural_network(model, train_ds, epochs=1, verbose=1)
+    history = train_neural_network(model, train_ds, epochs=5, verbose=1)
     
     # STEP 7: Evaluare după antrenare
     final_metrics = calculate_metrics(model, test_ds)
