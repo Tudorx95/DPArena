@@ -1,6 +1,6 @@
 // CodeCell.jsx (updated with Monaco Editor for persistent syntax highlighting)
-import React, { useState } from 'react';
-import { Play, Loader2, Copy, Check, RefreshCw } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Play, Loader2, Copy, Check, RefreshCw, ClipboardPaste } from 'lucide-react';
 import Editor, { loader } from '@monaco-editor/react';
 import { useTheme } from '../context/ThemeContext';
 
@@ -13,24 +13,33 @@ loader.config({
 
 export default function CodeCell({ content, handleContentChange, handleRun, isRunning, isCompleted, activeTemplate, onToggleTemplate }) {
     const [copied, setCopied] = useState(false);
+    const [pasted, setPasted] = useState(false);
+    const editorRef = useRef(null);
     const { isDarkMode } = useTheme();
 
     const handleCopy = async () => {
         try {
-            // Încearcă metoda modernă (funcționează doar pe HTTPS sau localhost)
+            // Determine what to copy: selected text or all content
+            let textToCopy = content;
+            if (editorRef.current) {
+                const selection = editorRef.current.getSelection();
+                const selectedText = editorRef.current.getModel()?.getValueInRange(selection);
+                if (selectedText && selectedText.length > 0) {
+                    textToCopy = selectedText;
+                }
+            }
+
             if (navigator.clipboard && navigator.clipboard.writeText) {
-                await navigator.clipboard.writeText(content);
+                await navigator.clipboard.writeText(textToCopy);
             } else {
-                // Fallback pentru HTTP (funcționează și pe servere remote fără HTTPS)
                 const textArea = document.createElement('textarea');
-                textArea.value = content;
+                textArea.value = textToCopy;
                 textArea.style.position = 'fixed';
                 textArea.style.left = '-999999px';
                 textArea.style.top = '-999999px';
                 document.body.appendChild(textArea);
                 textArea.focus();
                 textArea.select();
-
                 try {
                     document.execCommand('copy');
                 } finally {
@@ -39,10 +48,29 @@ export default function CodeCell({ content, handleContentChange, handleRun, isRu
             }
 
             setCopied(true);
-            setTimeout(() => setCopied(false), 2000); // Reset după 2 secunde
+            setTimeout(() => setCopied(false), 2000);
         } catch (err) {
             console.error('Failed to copy:', err);
             alert('Nu s-a putut copia textul. Vă rugăm selectați manual și copiați cu Ctrl+C.');
+        }
+    };
+
+    const handlePaste = async () => {
+        try {
+            let clipboardText = '';
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                clipboardText = await navigator.clipboard.readText();
+            } else {
+                alert('Clipboard access not supported. Please use Ctrl+V inside the editor.');
+                return;
+            }
+            // Replace ALL content with clipboard text
+            handleContentChange(clipboardText);
+            setPasted(true);
+            setTimeout(() => setPasted(false), 2000);
+        } catch (err) {
+            console.error('Failed to paste:', err);
+            alert('Nu s-a putut face paste. Folosiți Ctrl+V în editor.');
         }
     };
 
@@ -69,7 +97,7 @@ export default function CodeCell({ content, handleContentChange, handleRun, isRu
                     <button
                         onClick={handleCopy}
                         className="flex items-center gap-1.5 px-3 py-1.5 text-gray-700 dark:text-gray-300 text-sm rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                        title="Copy code"
+                        title="Copy selected text, or all if nothing selected"
                     >
                         {copied ? (
                             <>
@@ -80,6 +108,26 @@ export default function CodeCell({ content, handleContentChange, handleRun, isRu
                             <>
                                 <Copy className="w-4 h-4" />
                                 <span>Copy</span>
+                            </>
+                        )}
+                    </button>
+
+                    {/* Paste Button */}
+                    <button
+                        onClick={handlePaste}
+                        disabled={isCompleted || isRunning}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-gray-700 dark:text-gray-300 text-sm rounded hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        title="Paste clipboard content (replaces all text)"
+                    >
+                        {pasted ? (
+                            <>
+                                <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
+                                <span className="text-green-600 dark:text-green-400">Pasted!</span>
+                            </>
+                        ) : (
+                            <>
+                                <ClipboardPaste className="w-4 h-4" />
+                                <span>Paste</span>
                             </>
                         )}
                     </button>
@@ -113,6 +161,7 @@ export default function CodeCell({ content, handleContentChange, handleRun, isRu
                     language="python"
                     value={content}
                     onChange={(value) => handleContentChange(value || '')}
+                    onMount={(editor) => { editorRef.current = editor; }}
                     theme={isDarkMode ? 'vs-dark' : 'light'}
                     options={{
                         minimap: { enabled: false },

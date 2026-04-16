@@ -17,11 +17,7 @@ export default function MultiExportCSV({ onClose, token, projects }) {
         'Authorization': `Bearer ${token}`
     };
 
-    // Expand all projects by default
-    useEffect(() => {
-        const allProjectIds = new Set(projects.map(p => p.id));
-        setExpandedProjects(allProjectIds);
-    }, [projects]);
+    // Projects start collapsed — user expands manually
 
     // Handle ESC key to close modal
     useEffect(() => {
@@ -349,7 +345,7 @@ export default function MultiExportCSV({ onClose, token, projects }) {
                 </div>
 
                 {/* Projects and Files List */}
-                <div className="flex-1 overflow-y-auto p-6">
+                <div className="flex-1 overflow-y-auto p-6 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-gray-100 dark:[&::-webkit-scrollbar-track]:bg-gray-800 [&::-webkit-scrollbar-thumb]:bg-gray-300 dark:[&::-webkit-scrollbar-thumb]:bg-gray-600 [&::-webkit-scrollbar-thumb]:rounded-full">
                     {projects.length === 0 ? (
                         <div className="text-center py-12 text-gray-500 dark:text-gray-400">
                             <FileSpreadsheet className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-gray-600" />

@@ -11,6 +11,8 @@ export default function GraphsPage({ onBack, token, activeProjectId, projects })
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
 
+    const activeProject = projects?.find(p => String(p.id) === String(activeProjectId));
+
     const getFileName = (fileId) => {
         if (!projects) return 'Unknown File';
         for (const project of projects) {
@@ -111,14 +113,21 @@ export default function GraphsPage({ onBack, token, activeProjectId, projects })
 
             <div className="flex-1 p-6 overflow-auto page-scroll">
                 {/* Header */}
-                <div className="flex items-center gap-4 mb-6">
-                    <button
-                        onClick={onBack}
-                        className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
-                    >
-                        <ArrowLeft className="w-5 h-5 text-gray-900 dark:text-gray-100" />
-                    </button>
-                    <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100">Simulation Graphs</h1>
+                <div className="relative flex items-center mb-6 min-h-[40px]">
+                    <div className="flex items-center gap-4">
+                        <button
+                            onClick={onBack}
+                            className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                        >
+                            <ArrowLeft className="w-5 h-5 text-gray-900 dark:text-gray-100" />
+                        </button>
+                        <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100">Simulation Graphs</h1>
+                    </div>
+                    {activeProject && (
+                        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5">
+                            <span className="text-lg font-semibold text-blue-600 dark:text-blue-400">📁 {activeProject.name}</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Error Message */}
@@ -309,13 +318,7 @@ export default function GraphsPage({ onBack, token, activeProjectId, projects })
                     </div>
                 )}
 
-                {/* No Selection Message */}
-                {!loading && simulations.length > 0 && selectedSimulations.length === 0 && (
-                    <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300 px-4 py-3 rounded">
-                        <p className="font-medium">No simulations selected</p>
-                        <p className="text-sm mt-1">Select one or more simulations above to view their graphs.</p>
-                    </div>
-                )}
+
             </div>
         </div>
     );

@@ -67,7 +67,7 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
                     const data = await response.json();
                     const agg = data.aggregation || [];
                     const pois = data.poisoning || [];
-                    
+
                     setCustomFunctions(agg);
                     setCustomPoisoningFunctions(pois);
                 }
@@ -197,6 +197,28 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
     const showTransform = op === 'backdoor_edge_case';
     const showWatermarkType = op === 'backdoor_trojan';
     const hasSubParams = showTargetClass || showNoFlip || showTriggerType || showPatternType || showModification || showTransform || showWatermarkType;
+
+    // Attacks that use poison_intensity as a meaningful hyperparameter:
+    // - backdoor_blended: blending ratio (alpha) of the pattern overlay
+    // - backdoor_sig: amplitude of the sinusoidal signal
+    // - backdoor_badnets: controls trigger size/strength
+    // - backdoor_trojan: opacity of the watermark
+    // Attacks that do NOT use intensity:
+    // - label_flip: just flips the label, no numeric intensity
+    // - semantic_backdoor: applies a fixed semantic transformation (no ratio)
+    // - backdoor_edge_case: applies a fixed geometric transform (no ratio)
+    // - custom (@...) functions: unknown, keep enabled for safety
+    const INTENSITY_ATTACKS = new Set(['backdoor_blended', 'backdoor_sig', 'backdoor_badnets', 'backdoor_trojan']);
+    const intensityEnabled = INTENSITY_ATTACKS.has(op) || op.startsWith('@');
+    const intensityDisabledReason = !intensityEnabled
+        ? op === 'label_flip'
+            ? 'Label Flip does not use intensity — it only flips labels'
+            : op === 'semantic_backdoor'
+                ? 'Semantic Backdoor uses a fixed visual modification — intensity has no effect'
+                : op === 'backdoor_edge_case'
+                    ? 'Edge-case Backdoor uses a fixed geometric transform — intensity has no effect'
+                    : 'This attack does not use intensity'
+        : null;
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -387,20 +409,39 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
                             </div>
 
                             <div className="col-span-6 sm:col-span-3">
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                <label className={`block text-sm font-medium mb-2 ${intensityEnabled
+                                    ? 'text-gray-700 dark:text-gray-300'
+                                    : 'text-gray-400 dark:text-gray-500'
+                                    }`}>
                                     Intensity
+                                    {!intensityEnabled && (
+                                        <span className="ml-1.5 text-xs font-normal text-gray-400 dark:text-gray-500">— N/A</span>
+                                    )}
                                 </label>
-                                <input
-                                    type="number"
-                                    value={config.poison_intensity}
-                                    onChange={(e) => handleChange('poison_intensity', parseFloat(e.target.value))}
-                                    min="0.01"
-                                    max="1.0"
-                                    step="0.01"
-                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                                    required
-                                />
-                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Attack intensity (0.01-1.0)</p>
+                                <div title={intensityDisabledReason || ''}>
+                                    <input
+                                        type="number"
+                                        value={config.poison_intensity}
+                                        onChange={(e) => handleChange('poison_intensity', parseFloat(e.target.value))}
+                                        min="0.01"
+                                        max="1.0"
+                                        step="0.01"
+                                        disabled={!intensityEnabled}
+                                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent transition-colors ${intensityEnabled
+                                            ? 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+                                            : 'border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-60'
+                                            }`}
+                                        required={intensityEnabled}
+                                    />
+                                </div>
+                                <p className={`text-xs mt-1 ${intensityEnabled
+                                    ? 'text-gray-500 dark:text-gray-400'
+                                    : 'text-gray-400 dark:text-gray-500 italic'
+                                    }`}>
+                                    {intensityEnabled
+                                        ? 'Attack intensity (0.01-1.0)'
+                                        : 'Not used by this attack'}
+                                </p>
                             </div>
 
                             <div className="col-span-6 sm:col-span-3">

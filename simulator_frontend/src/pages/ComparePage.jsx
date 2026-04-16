@@ -12,6 +12,8 @@ export default function ComparePage({ onBack, token, activeProjectId, projects }
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
 
+    const activeProject = projects?.find(p => String(p.id) === String(activeProjectId));
+
     const getFileName = (fileId) => {
         if (!projects) return 'Unknown File';
         for (const project of projects) {
@@ -95,14 +97,21 @@ export default function ComparePage({ onBack, token, activeProjectId, projects }
 
             <div className="flex-1 p-6 overflow-auto page-scroll">
                 {/* Header */}
-                <div className="flex items-center gap-4 mb-6">
-                    <button
-                        onClick={onBack}
-                        className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
-                    >
-                        <ArrowLeft className="w-5 h-5 text-gray-900 dark:text-gray-100" />
-                    </button>
-                    <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100">Compare Simulations</h1>
+                <div className="relative flex items-center mb-6 min-h-[40px]">
+                    <div className="flex items-center gap-4">
+                        <button
+                            onClick={onBack}
+                            className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                        >
+                            <ArrowLeft className="w-5 h-5 text-gray-900 dark:text-gray-100" />
+                        </button>
+                        <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100">Compare Simulations</h1>
+                    </div>
+                    {activeProject && (
+                        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5">
+                            <span className="text-lg font-semibold text-blue-600 dark:text-blue-400">📁 {activeProject.name}</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Error Message */}
@@ -362,27 +371,27 @@ function ResultBox({ title, data }) {
                             {analysis.accuracy_drop?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded border border-yellow-200 dark:border-yellow-800">
+                    <div className="flex justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
                         <strong className="text-gray-700 dark:text-gray-300">Drop (Clean - Init):</strong>
-                        <span className="font-mono text-yellow-700 dark:text-yellow-400 text-base font-bold">
+                        <span className="font-mono text-blue-700 dark:text-blue-400 text-base font-bold">
                             {analysis.drop_clean_init?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800">
+                    <div className="flex justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
                         <strong className="text-gray-700 dark:text-gray-300">Drop (Clean DP - Init):</strong>
-                        <span className="font-mono text-amber-700 dark:text-amber-400 text-base font-bold">
+                        <span className="font-mono text-blue-700 dark:text-blue-400 text-base font-bold">
                             {analysis.drop_clean_dp_init?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-pink-50 dark:bg-pink-900/20 rounded border border-pink-200 dark:border-pink-800">
+                    <div className="flex justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
                         <strong className="text-gray-700 dark:text-gray-300">Drop (Poisoned - Init):</strong>
-                        <span className="font-mono text-pink-700 dark:text-pink-400 text-base font-bold">
+                        <span className="font-mono text-blue-700 dark:text-blue-400 text-base font-bold">
                             {analysis.drop_poison_init?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-indigo-50 dark:bg-indigo-900/20 rounded border border-indigo-200 dark:border-indigo-800">
+                    <div className="flex justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
                         <strong className="text-gray-700 dark:text-gray-300">Drop (Poisoned DP - Init):</strong>
-                        <span className="font-mono text-indigo-700 dark:text-indigo-400 text-base font-bold">
+                        <span className="font-mono text-blue-700 dark:text-blue-400 text-base font-bold">
                             {analysis.drop_poison_dp_init?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
