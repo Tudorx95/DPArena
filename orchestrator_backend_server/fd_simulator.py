@@ -237,6 +237,41 @@ def load_model_framework_agnostic(model_path, use_template=False):
     return move_model_to_device(model)
 
 
+def load_model_on_cpu(model_path, use_template=False):
+    """Încarcă modelul direct pe CPU, indiferent de DEVICE global.
+    Util pentru a nu ocupa VRAM pentru toți clienții simultan.
+    """
+    if use_template and TEMPLATE_FUNCS.has_function('load_model_config'):
+        load_func = TEMPLATE_FUNCS.get_function('load_model_config')
+        model = load_func(model_path)
+        if FRAMEWORK == 'pytorch':
+            model = model.cpu()
+        return model
+    
+    if FRAMEWORK == 'tensorflow':
+        # TensorFlow nu are "move to CPU" explicit, dar nu ocupă VRAM la load dacă memory growth e activat
+        model = tf.keras.models.load_model(model_path, compile=False)
+        model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+        return model
+    else:  # pytorch
+        if TEMPLATE_FUNCS.has_function('create_model'):
+            create_model_func = TEMPLATE_FUNCS.get_function('create_model')
+            model = create_model_func()
+            checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                model.load_state_dict(checkpoint)
+            return model.cpu()
+        else:
+            raise RuntimeError("PyTorch model loading requires create_model() in template_code.py")
+
+
+# Semafor pentru a limita numărul de clienți care antrenează pe GPU simultan.
+# Mărit la nevoie; cu 8 GB VRAM, 2-4 modele simultan e de obicei sigur.
+MAX_CONCURRENT_GPU_CLIENTS = int(os.environ.get('MAX_CONCURRENT_GPU_CLIENTS', '4'))
+_gpu_semaphore = threading.Semaphore(MAX_CONCURRENT_GPU_CLIENTS)
+
 def get_model_weights_framework_agnostic(model, use_template=False):
     """Extrage weights folosind framework-ul potrivit"""
     if use_template and TEMPLATE_FUNCS.has_function('get_model_weights'):
@@ -1019,40 +1054,61 @@ class EnhancedFederatedClient:
             else:
                 raise RuntimeError("load_client_data() required in template_code.py")
             
-            # Setează weights curente
-            set_model_weights_framework_agnostic(self.model, self.current_weights, self.use_template)
-            
-            # Antrenare
-            if self.use_template and TEMPLATE_FUNCS.has_function('train_neural_network'):
-                train_func = TEMPLATE_FUNCS.get_function('train_neural_network')
-                train_func(self.model, train_ds, epochs=3, verbose=0)
+            # Semafor GPU: limitează câți clienți antrenează pe GPU simultan.
+            # Modelul stă pe CPU între runde; e mutat pe GPU doar aici, cât timp
+            # semaforul este deținut, apoi revine pe CPU înainte de eliberare.
+            if FRAMEWORK == 'pytorch':
+                _gpu_semaphore.acquire()
+                try:
+                    self.model = self.model.to(DEVICE)
+                    
+                    # Setează weights curente
+                    set_model_weights_framework_agnostic(self.model, self.current_weights, self.use_template)
+                    
+                    # Antrenare
+                    if self.use_template and TEMPLATE_FUNCS.has_function('train_neural_network'):
+                        train_func = TEMPLATE_FUNCS.get_function('train_neural_network')
+                        train_func(self.model, train_ds, epochs=3, verbose=0)
+                    else:
+                        raise RuntimeError("train_neural_network() required in template_code.py for PyTorch")
+                    
+                    # Evaluare
+                    y_true, y_pred = [], []
+                    self.model.eval()
+                    with torch.no_grad():
+                        for images, labels in test_ds:
+                            images = images.to(DEVICE)
+                            outputs = self.model(images)
+                            _, predicted = torch.max(outputs.data, 1)
+                            
+                            if len(labels.shape) > 1 and labels.shape[1] > 1:
+                                labels = torch.argmax(labels, dim=1)
+                            
+                            y_true.extend(labels.cpu().numpy())
+                            y_pred.extend(predicted.cpu().numpy())
+                finally:
+                    # Mută modelul înapoi pe CPU și eliberează VRAM înainte de release semafor
+                    self.model = self.model.cpu()
+                    torch.cuda.empty_cache()
+                    _gpu_semaphore.release()
             else:
-                if FRAMEWORK == 'tensorflow':
+                # TensorFlow — gestionează singur memoria GPU
+                # Setează weights curente
+                set_model_weights_framework_agnostic(self.model, self.current_weights, self.use_template)
+                
+                # Antrenare
+                if self.use_template and TEMPLATE_FUNCS.has_function('train_neural_network'):
+                    train_func = TEMPLATE_FUNCS.get_function('train_neural_network')
+                    train_func(self.model, train_ds, epochs=3, verbose=0)
+                else:
                     self.model.fit(train_ds, epochs=3, verbose=0)
-                else:  # pytorch
-                    raise RuntimeError("train_neural_network() required in template_code.py for PyTorch")
-            
-            # Evaluare
-            y_true, y_pred = [], []
-            
-            if FRAMEWORK == 'tensorflow':
+                
+                # Evaluare
+                y_true, y_pred = [], []
                 for images, labels in test_ds:
                     predictions = self.model.predict(images, verbose=0)
                     y_pred.extend(np.argmax(predictions, axis=1))
                     y_true.extend(np.argmax(labels.numpy(), axis=1))
-            else:  # pytorch
-                self.model.eval()
-                with torch.no_grad():
-                    for images, labels in test_ds:
-                        images = images.to(DEVICE)
-                        outputs = self.model(images)
-                        _, predicted = torch.max(outputs.data, 1)
-                        
-                        if len(labels.shape) > 1 and labels.shape[1] > 1:
-                            labels = torch.argmax(labels, dim=1)
-                        
-                        y_true.extend(labels.cpu().numpy())
-                        y_pred.extend(predicted.cpu().numpy())
             
             # Calculează metrici
             from sklearn.metrics import accuracy_score
@@ -1071,7 +1127,8 @@ class EnhancedFederatedClient:
             traceback.print_exc()
             accuracy = precision = recall = f1 = 0.0
         
-        # Extrage weights
+        # Extrage weights — pentru PyTorch modelul este deja pe CPU
+        # (semaforul GPU îl mută înapoi în blocul finally din train_one_round)
         weights = get_model_weights_framework_agnostic(self.model, self.use_template)
         
         return weights, accuracy, precision, recall, f1
@@ -1098,11 +1155,12 @@ class EnhancedFederatedClient:
                 logger.error(f"Client {self.client_id}: Timeout waiting for base weights")
                 return
         
-        # Încarcă model
+        # Încarcă model pe CPU (va fi mutat pe GPU doar în timpul antrenării)
+        # Astfel, nu se ocupă memorie VRAM pentru toți cei N clienți simultan.
         try:
-            self.model = load_model_framework_agnostic(self.nn_path, self.use_template)
+            self.model = load_model_on_cpu(self.nn_path, self.use_template)
             self.current_num_classes = get_model_output_shape(self.model)
-            logger.info(f"Client {self.client_id}: Model loaded ({FRAMEWORK.upper()}, classes: {self.current_num_classes})")
+            logger.info(f"Client {self.client_id}: Model loaded on CPU ({FRAMEWORK.upper()}, classes: {self.current_num_classes})")
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error loading model: {e}")
             # Write to debug file

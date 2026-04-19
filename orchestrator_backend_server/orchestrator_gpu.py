@@ -168,6 +168,13 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         model_name = f"{config['NN_NAME']}.{ext}"
         model_path = user_dir / model_name
 
+        # Environment CPU-only: FORȚEAZĂ CPU pentru TOATE subprocesele
+        # de dinainte de alocarea GPU (Steps 2-4).
+        # Fără asta, PyTorch din template_code.py face model.to('cuda:0')
+        # la import/create_model() și crapă cu OOM dacă GPU0 e plin.
+        env_cpu_only = os.environ.copy()
+        env_cpu_only['CUDA_VISIBLE_DEVICES'] = ''
+
         # ========== STEP 2: Verify template structure ==========
         shared_simulations[task_id] = {
             "status": "running", 
@@ -178,7 +185,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         
         conda_activate = f"source {CONDA_BASE}/bin/activate {conda_env}"
 
-        # Verify template before execution
+        # Verify template before execution (CPU-only — nu necesită GPU)
         verify_script = Path(__file__).parent / "verify_template.py"
         cmd_verify = f" {conda_activate} && cd {user_dir} && python {verify_script}"
         result_verify = subprocess.run(
@@ -187,7 +194,8 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             capture_output=True, 
             text=True, 
             executable="/bin/bash", 
-            timeout=600
+            timeout=600,
+            env=env_cpu_only
         )
         
         if result_verify.returncode != 0:
@@ -210,17 +218,14 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         if task_id not in shared_simulations or shared_simulations[task_id].get("status") == "cancelling":
             raise InterruptedError("Simulation cancelled by user")
 
-        # Download data (no GPU needed)
-        env_no_gpu = os.environ.copy()
+        # Download data (CPU-only)
         cmd = f"{conda_activate} && cd {user_dir} && python -c 'from template_code import download_data; download_data(\"clean_data\")'"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env_no_gpu)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env_cpu_only)
         if result.returncode != 0:
             error_msg = f"Download data failed: {result.stderr}\nStdout: {result.stdout}"
             shared_simulations[task_id] = {"status": "error", "message": error_msg, "step": 3}
             app.logger.error(error_msg)
             return
-        
-
         
         # ========== STEP 3b: Partition data for FL clients (Non-IID) ==========
         partition_script = Path(__file__).parent / "partition_data_fl.py"
@@ -229,7 +234,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             f"--data_dir {user_dir / 'clean_data'} "
             f"--num_clients {config['N']}"
         )
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env_no_gpu)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env_cpu_only)
         if result.returncode != 0:
             error_msg = f"Data partitioning failed: {result.stderr}\nStdout: {result.stdout}"
             shared_simulations[task_id] = {"status": "error", "message": error_msg, "step": 3}
@@ -280,7 +285,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         if config.get('transform'):
             cmd += f" --transform {config['transform']}"
         
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash")
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env_cpu_only)
         if result.returncode != 0:
             error_msg = f"Poison data failed: {result.stderr}\nStdout: {result.stdout}"
             shared_simulations[task_id] = {"status": "error", "message": error_msg, "step": 4}
@@ -725,11 +730,13 @@ DP Protection F1 Score: {analysis['poisoned_dp_f1']:.4f}
 
 @app.route("/")
 def index():
+    gpu_status = gpu_manager.get_status()
     return jsonify({
         "message": "FL Orchestrator API", 
         "status": "running",
         "available_gpus": gpu_manager.available_gpus,
-        "gpus_in_use": len(gpu_manager.available_gpus) - gpu_manager.get_available_count()
+        "gpus_with_memory": gpu_status['available_count'],
+        "total_allocations": gpu_status['total_allocations']
     })
 
 @app.route("/login", methods=["POST"])
@@ -1022,13 +1029,8 @@ def get_results(task_id):
 
 @app.route("/gpu_status", methods=["GET"])
 def gpu_status():
-    """Get current GPU allocation status"""
-    return jsonify({
-        "available_gpus": gpu_manager.available_gpus,
-        "total_gpus": len(gpu_manager.available_gpus),
-        "available_count": gpu_manager.get_available_count(),
-        "in_use": len(gpu_manager.available_gpus) - gpu_manager.get_available_count()
-    })
+    """Get current GPU allocation status with real-time memory info"""
+    return jsonify(gpu_manager.get_status())
 
 if __name__ == "__main__":
     BASE_DIR.mkdir(parents=True, exist_ok=True)

@@ -2,15 +2,23 @@
 Template pentru antrenarea rețelelor neuronale în medii Federated Learning
 Compatibil cu PyTorch
 
-Model: DenseNet121 PRE-ANTRENAT pe ImageNet (torchvision weights)
-       Adaptat pentru clasificare binară pe radiografii toracice
-       Ultimul layer (classifier) — Linear(1024, 2)
+Model: ViT-Base/16 FINE-TUNAT pe chest X-ray pneumonia classification
+       Repo: lxyuan/vit-xray-pneumonia-classification (HuggingFace, public)
+       Arhitectură: google/vit-base-patch16-224-in21k + cap Linear(768, 2)
+       Acuratețe raportată: 97.42% pe validation set
+       Dataset antrenare: keremberke/chest-xray-classification (binary)
+
+       MOTIVUL ALEGERII: modelul este deja fine-tunat pe sarcina de pneumonia
+       binary classification — acuratețea inițială este stabilă și mare la
+       fiecare rulare (fără reinițializare random). Label mapping nativ:
+       0=NORMAL, 1=PNEUMONIA — identic cu PneumoniaMNIST.
+
 Dataset: PneumoniaMNIST (5,856 radiografii toracice 28×28 grayscale, 2 clase)
          Sursa: MedMNIST v2 (Yang et al., 2023)
          Descărcat automat de pe Zenodo ca fișier .npz
 
 SCOP: Detectarea pneumoniei din radiografii toracice pediatrice
-      folosind transfer learning cu DenseNet121 în context Federated Learning
+      folosind transfer learning cu ViT în context Federated Learning
 """
 import torch
 import torch.nn as nn
@@ -36,6 +44,9 @@ IMG_SIZE = (224, 224)
 # PneumoniaMNIST dataset URL (MedMNIST v2 — Zenodo)
 MEDMNIST_URL = "https://zenodo.org/records/10519652/files/pneumoniamnist.npz"
 MEDMNIST_FILENAME = "pneumoniamnist.npz"
+
+# HuggingFace — ViT fine-tunat public pe chest X-ray pneumonia binary
+HF_REPO_ID = "lxyuan/vit-xray-pneumonia-classification"
 
 # Device configuration
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -337,66 +348,108 @@ def download_data(output_dir: str):
 # ============================================================================
 # 2. FUNCȚIE PENTRU CREARE/DESCĂRCARE MODEL
 # ============================================================================
+def _install_transformers():
+    """
+    Instalează transformers + huggingface_hub dacă lipsesc (import lazy).
+    Apelat doar din create_model(), nu la top-level.
+    """
+    try:
+        import transformers  # noqa: F401
+    except ImportError:
+        import subprocess, sys
+        print("Installing transformers...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install",
+                               "transformers", "-q"])
+    try:
+        import huggingface_hub  # noqa: F401
+    except ImportError:
+        import subprocess, sys
+        print("Installing huggingface_hub...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install",
+                               "huggingface_hub", "-q"])
+
+
 def _create_densenet121_pneumonia() -> nn.Module:
     """
-    Creează arhitectura DenseNet121 adaptată pentru detecția pneumoniei.
-    
-    Arhitectura:
-    - DenseNet121 backbone (torchvision)
-    - classifier: Linear(1024, 2) — 2 clase (NORMAL / PNEUMONIA)
-    
-    NU încarcă ponderi pre-antrenate — doar arhitectura.
-    
+    Construiește arhitectura ViT-Base/16 cu cap binar (2 clase), fără ponderi
+    pre-antrenate. Folosit intern ca schelet pentru load_state_dict în
+    load_model_config / load_weights_only.
+
+    Notă: numele funcției este păstrat din template-ul original pentru
+    compatibilitate cu restul pipeline-ului; arhitectura subiacentă este ViT
+    (backbone înlocuit de la DenseNet121 pentru stabilitate mai mare a
+    acurateței inițiale).
+
     Returns:
-        nn.Module: Model cu ponderi random
+        nn.Module: ViTForImageClassification cu 2 clase
     """
-    model = torchvision.models.densenet121(weights=None)
-    
-    # Modifică ultimul layer pentru NUM_CLASSES (clasificare binară)
-    num_features = model.classifier.in_features  # 1024
-    model.classifier = nn.Linear(num_features, NUM_CLASSES)
-    
+    _install_transformers()
+    from transformers import ViTForImageClassification, ViTConfig
+
+    config = ViTConfig.from_pretrained(
+        "google/vit-base-patch16-224-in21k",
+        num_labels=NUM_CLASSES,
+        id2label={0: "NORMAL", 1: "PNEUMONIA"},
+        label2id={"NORMAL": 0, "PNEUMONIA": 1},
+    )
+    model = ViTForImageClassification(config)
     return model
 
 
 def create_model() -> nn.Module:
     """
-    Creează model DenseNet121 pre-antrenat pe ImageNet și adaptat
-    pentru clasificare binară (NORMAL vs PNEUMONIA).
-    
-    Model: torchvision DenseNet121
-    - Pre-antrenat pe ImageNet (IMAGENET1K_V1)
-    - Ultimul layer înlocuit: Linear(1024, 2)
-    - Acuratețe inițială pe PneumoniaMNIST: depinde de transfer learning
-    
+    Descarcă ViT fine-tunat pe chest X-ray pneumonia de pe HuggingFace.
+
+    Sursa: lxyuan/vit-xray-pneumonia-classification (public, PyTorch/safetensors)
+    - Base: google/vit-base-patch16-224-in21k
+    - Fine-tunat pe keremberke/chest-xray-classification (binary)
+    - Acuratețe raportată: 97.42% pe validation set
+    - Label mapping: 0=NORMAL, 1=PNEUMONIA (identic cu PneumoniaMNIST)
+    - Ponderi STABILE la fiecare rulare (fără reinițializare random)
+
+    Wrapper: ViT-ul HF returnează ImageClassifierOutput. Îl împachetăm
+    într-un nn.Module care returnează direct logits (tensor), pentru
+    compatibilitate cu restul pipeline-ului (train_neural_network,
+    calculate_metrics) care așteaptă output.shape = (B, NUM_CLASSES).
+
     Returns:
-        nn.Module: Model compilat cu ponderi pre-antrenate
+        nn.Module: Model compilat, ponderi stabile, interfață standard
     """
     try:
-        print(f"Loading DenseNet121 pretrained on ImageNet...")
-        
-        # Încarcă modelul cu ponderi ImageNet
-        model = torchvision.models.densenet121(
-            weights=torchvision.models.DenseNet121_Weights.IMAGENET1K_V1
-        )
-        
-        # Adaptează ultimul layer pentru clasificare binară
-        num_features = model.classifier.in_features  # 1024
-        model.classifier = nn.Linear(num_features, NUM_CLASSES)
-        
+        _install_transformers()
+        from transformers import ViTForImageClassification
+
+        print(f"Loading ViT fine-tunat pe chest X-ray din HuggingFace...")
+        print(f"  Repo: {HF_REPO_ID}")
+
+        vit = ViTForImageClassification.from_pretrained(HF_REPO_ID)
+
+        # Wrapper transparent: output = tensor de logits (B, 2)
+        class _ViTLogitsWrapper(nn.Module):
+            def __init__(self, vit_model):
+                super().__init__()
+                self.vit = vit_model
+
+            def forward(self, pixel_values):
+                # Accept și input standard (B, 3, H, W)
+                out = self.vit(pixel_values=pixel_values)
+                return out.logits
+
+        model = _ViTLogitsWrapper(vit)
         model.to(DEVICE)
-        
+
         total_params = sum(p.numel() for p in model.parameters())
-        print(f"✓ DenseNet121 loaded with ImageNet weights")
-        print(f"  Classifier adapted: Linear({num_features}, {NUM_CLASSES})")
+        print(f"✓ ViT-xray-pneumonia loaded from HuggingFace")
+        print(f"  Architecture: ViT-Base/16 + Linear(768, {NUM_CLASSES})")
         print(f"  Total parameters: {total_params:,}")
-        print(f"  Classes: {PNEUMONIA_CLASSES}")
-        
+        print(f"  Classes: {PNEUMONIA_CLASSES}  (0=NORMAL, 1=PNEUMONIA)")
+        print(f"  Reported accuracy: 97.42% on chest-xray-classification")
+
         _model_compile(model)
         return model
-        
+
     except Exception as e:
-        raise RuntimeError(f"Failed to create DenseNet121 model: {e}")
+        raise RuntimeError(f"Failed to create ViT pneumonia model: {e}")
 
 
 def _model_compile(model: nn.Module):
@@ -661,12 +714,12 @@ def save_model_config(
     torch.save({
         'model_state_dict': model.state_dict(),
         'architecture': {
-            'base': 'densenet121',
-            'source': 'torchvision/ImageNet',
+            'base': 'vit-base-patch16-224',
+            'source': HF_REPO_ID,
             'num_classes': NUM_CLASSES,
             'img_size': list(IMG_SIZE),
             'modifications': {
-                'classifier': {'in_features': 1024, 'out_features': NUM_CLASSES}
+                'classifier': {'in_features': 768, 'out_features': NUM_CLASSES}
             }
         },
         'normalization': {
@@ -693,16 +746,17 @@ def load_model_config(filepath: str) -> nn.Module:
     
     checkpoint = torch.load(filepath, map_location=DEVICE)
     
-    # Reconstruiește arhitectura din checkpoint
-    if isinstance(checkpoint, dict) and 'architecture' in checkpoint:
-        arch = checkpoint['architecture']
-        model = torchvision.models.densenet121(weights=None)
-        mod = arch['modifications']
-        model.classifier = nn.Linear(mod['classifier']['in_features'], mod['classifier']['out_features'])
-    else:
-        # Fallback la arhitectura hardcodată
-        model = _create_densenet121_pneumonia()
-    
+    # Reconstruiește arhitectura din checkpoint (schelet ViT cu wrapper)
+    base = _create_densenet121_pneumonia()
+
+    class _ViTLogitsWrapper(nn.Module):
+        def __init__(self, vit_model):
+            super().__init__()
+            self.vit = vit_model
+        def forward(self, pixel_values):
+            return self.vit(pixel_values=pixel_values).logits
+
+    model = _ViTLogitsWrapper(base)
     model.to(DEVICE)
     
     # Încarcă ponderile
