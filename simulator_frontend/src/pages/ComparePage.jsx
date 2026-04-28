@@ -209,6 +209,7 @@ export default function ComparePage({ onBack, token, activeProjectId, projects }
                         <ResultBox
                             title={`Simulation 2 (${getFileName(results.simulation2.file_id)})`}
                             data={results.simulation2}
+                            reversed
                         />
                     </div>
                 )}
@@ -217,41 +218,75 @@ export default function ComparePage({ onBack, token, activeProjectId, projects }
     );
 }
 
-function ResultBox({ title, data }) {
+function ResultBox({ title, data, reversed = false }) {
+    const flexDir = reversed ? 'flex flex-row-reverse' : 'flex';
     const analysis = data.results?.analysis || {};
     const summary = data.results?.summary || 'No summary available';
     const config = data.config || {};
 
+    const getPoisonOperationLabel = (op) => {
+        const map = {
+            'label_flip': '🔄 Label Flip',
+            'backdoor_badnets': '🎯 BadNets Backdoor',
+            'backdoor_blended': '🌀 Blended Backdoor',
+            'backdoor_sig': '📡 SIG Backdoor',
+            'backdoor_trojan': '🏴 Trojan Backdoor',
+            'semantic_backdoor': '🎨 Semantic Backdoor',
+            'backdoor_edge_case': '🔀 Edge-case Backdoor'
+        };
+        if (!op) return 'N/A';
+        if (map[op]) return map[op];
+        if (op.startsWith('@')) return `🧪 ${op} (custom)`;
+        return op;
+    };
+
+    const getAggregationLabel = (agg) => {
+        const map = {
+            'fedavg': '⚖️ FedAvg',
+            'krum': '🛡️ Krum',
+            'trimmed_mean': '✂️ Trimmed Mean',
+            'median': '📊 Median',
+            'foolsgold': '🥇 FoolsGold',
+            'norm_clipping': '📏 Norm Clipping',
+            'trimmed_mean_krum': '🔗 Trimmed Mean + Krum',
+            'random': '🎲 Random'
+        };
+        if (!agg) return 'N/A';
+        if (map[agg]) return map[agg];
+        if (agg.startsWith('@')) return `🧩 ${agg} (custom)`;
+        return agg;
+    };
+
     return (
         <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow border border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-bold mb-4 text-gray-800 dark:text-gray-100 border-b dark:border-gray-700 pb-2">{title}</h3>
+            <h3 className={`text-lg font-bold mb-4 text-gray-800 dark:text-gray-100 border-b dark:border-gray-700 pb-2 ${reversed ? 'text-right' : ''}`}>{title}</h3>
 
             {/* Configuration */}
             <div className="mb-4">
                 <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">📊 FL Configuration:</h4>
                 <div className="space-y-1 text-sm text-gray-600 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800">
-                    <div className="flex justify-between">
-                        <strong>Total Clients (N):</strong>
+                    <div className={`${flexDir} justify-between`}>
+                        <strong>Total Clients (N)</strong>
                         <span className="font-mono text-blue-700 dark:text-blue-400">{config.N || 'N/A'}</span>
                     </div>
-                    <div className="flex justify-between">
-                        <strong>Malicious Clients (M):</strong>
+                    <div className={`${flexDir} justify-between`}>
+                        <strong>Malicious Clients (M)</strong>
                         <span className="font-mono text-red-600 dark:text-red-400">{config.M || 'N/A'}</span>
                     </div>
-                    <div className="flex justify-between">
-                        <strong>Neural Network:</strong>
+                    <div className={`${flexDir} justify-between`}>
+                        <strong>Neural Network</strong>
                         <span className="font-mono">{config.NN_NAME || 'N/A'}</span>
                     </div>
-                    <div className="flex justify-between">
-                        <strong>Training Rounds:</strong>
+                    <div className={`${flexDir} justify-between`}>
+                        <strong>Training Rounds</strong>
                         <span className="font-mono text-green-700 dark:text-green-400">{config.ROUNDS || 'N/A'}</span>
                     </div>
-                    <div className="flex justify-between">
-                        <strong>Poisoned Rounds (R):</strong>
+                    <div className={`${flexDir} justify-between`}>
+                        <strong>Poisoned Rounds (R)</strong>
                         <span className="font-mono text-orange-600 dark:text-orange-400">{config.R || 'N/A'}</span>
                     </div>
-                    <div className="flex justify-between">
-                        <strong>Strategy:</strong>
+                    <div className={`${flexDir} justify-between`}>
+                        <strong>Strategy</strong>
                         <span className="font-mono">{config.strategy || 'N/A'}</span>
                     </div>
                 </div>
@@ -263,30 +298,18 @@ function ResultBox({ title, data }) {
                 <div className="space-y-2 text-sm bg-red-50 dark:bg-red-900/20 p-3 rounded border border-red-200 dark:border-red-800">
                     {/* Poisoning Operation */}
                     <div className="p-2 bg-white dark:bg-gray-700 rounded border border-red-200 dark:border-red-700">
-                        <div className="flex justify-between items-center">
-                            <strong className="text-gray-700 dark:text-gray-300">Operation:</strong>
+                        <div className={`${flexDir} justify-between items-center`}>
+                            <strong className="text-gray-700 dark:text-gray-300">Operation</strong>
                             <span className="font-mono text-red-700 dark:text-red-400">
-                                {config.poison_operation === 'label_flip' && '🔄 Label Flip'}
-                                {config.poison_operation === 'backdoor_badnets' && '🎯 BadNets Backdoor'}
-                                {config.poison_operation === 'backdoor_blended' && '🌀 Blended Backdoor'}
-                                {config.poison_operation === 'backdoor_sig' && '📡 SIG Backdoor'}
-                                {config.poison_operation === 'backdoor_trojan' && '🏴 Trojan Backdoor'}
-                                {config.poison_operation === 'semantic_backdoor' && '🎨 Semantic Backdoor'}
-                                {config.poison_operation === 'backdoor_edge_case' && '🔀 Edge-case Backdoor'}
-                                {!config.poison_operation && 'N/A'}
+                                {getPoisonOperationLabel(config.poison_operation)}
                             </span>
                         </div>
-                        {config.poison_operation && (
-                            <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                <code className="bg-gray-100 dark:bg-gray-600 px-2 py-0.5 rounded">{config.poison_operation}</code>
-                            </div>
-                        )}
                     </div>
 
                     {/* Attack Intensity */}
                     <div className="p-2 bg-white dark:bg-gray-700 rounded border border-orange-200 dark:border-orange-700">
-                        <div className="flex justify-between items-center mb-1">
-                            <strong className="text-gray-700 dark:text-gray-300">Intensity:</strong>
+                        <div className={`${flexDir} justify-between items-center mb-1`}>
+                            <strong className="text-gray-700 dark:text-gray-300">Intensity</strong>
                             <span className="font-mono text-orange-700 dark:text-orange-400 text-base font-bold">
                                 {config.poison_intensity ? (config.poison_intensity * 100).toFixed(1) : 'N/A'}%
                             </span>
@@ -294,7 +317,7 @@ function ResultBox({ title, data }) {
                         {config.poison_intensity !== undefined && (
                             <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2 mt-1">
                                 <div
-                                    className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full transition-all"
+                                    className={`h-2 rounded-full transition-all ${reversed ? 'bg-gradient-to-r from-orange-400 to-red-500' : 'bg-gradient-to-r from-orange-400 to-red-500 ml-auto'}`}
                                     style={{ width: `${config.poison_intensity * 100}%` }}
                                 />
                             </div>
@@ -303,8 +326,8 @@ function ResultBox({ title, data }) {
 
                     {/* Poisoned Data Percentage */}
                     <div className="p-2 bg-white dark:bg-gray-700 rounded border border-red-300 dark:border-red-700">
-                        <div className="flex justify-between items-center mb-1">
-                            <strong className="text-gray-700 dark:text-gray-300">Data Percentage:</strong>
+                        <div className={`${flexDir} justify-between items-center mb-1`}>
+                            <strong className="text-gray-700 dark:text-gray-300">Data Percentage</strong>
                             <span className="font-mono text-red-700 dark:text-red-400 text-base font-bold">
                                 {config.poison_percentage ? (config.poison_percentage * 100).toFixed(1) : 'N/A'}%
                             </span>
@@ -312,7 +335,7 @@ function ResultBox({ title, data }) {
                         {config.poison_percentage !== undefined && (
                             <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2 mt-1">
                                 <div
-                                    className="bg-gradient-to-r from-red-500 to-red-700 h-2 rounded-full transition-all"
+                                    className={`h-2 rounded-full transition-all ${reversed ? 'bg-gradient-to-r from-red-500 to-red-700' : 'bg-gradient-to-r from-red-500 to-red-700 ml-auto'}`}
                                     style={{ width: `${config.poison_percentage * 100}%` }}
                                 />
                             </div>
@@ -328,6 +351,16 @@ function ResultBox({ title, data }) {
                             for <strong>{config.R || 0}</strong> rounds with <strong>{config.M || 0}</strong> malicious clients.
                         </div>
                     )}
+
+                    {/* Aggregation Function */}
+                    <div className="p-2 bg-white dark:bg-gray-700 rounded border border-green-300 dark:border-green-700">
+                        <div className={`${flexDir} justify-between items-center`}>
+                            <strong className="text-gray-700 dark:text-gray-300">Aggregation Function</strong>
+                            <span className="font-mono text-green-700 dark:text-green-400 font-bold">
+                                {getAggregationLabel(config.data_poison_protection)}
+                            </span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -335,74 +368,74 @@ function ResultBox({ title, data }) {
             <div className="mb-4">
                 <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">📈 Simulation Results:</h4>
                 <div className="space-y-2 text-sm">
-                    <div className="flex justify-between p-2 bg-purple-50 dark:bg-purple-900/20 rounded border border-purple-200 dark:border-purple-800">
-                        <strong className="text-gray-700 dark:text-gray-300">Init Accuracy:</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-purple-50 dark:bg-purple-900/20 rounded border border-purple-200 dark:border-purple-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">Init Accuracy</strong>
                         <span className="font-mono text-purple-700 dark:text-purple-400 text-base font-bold">
                             {analysis.init_accuracy?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-green-50 dark:bg-green-900/20 rounded border border-green-200 dark:border-green-800">
-                        <strong className="text-gray-700 dark:text-gray-300">Clean Accuracy:</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-green-50 dark:bg-green-900/20 rounded border border-green-200 dark:border-green-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">Clean Accuracy</strong>
                         <span className="font-mono text-green-700 dark:text-green-400 text-base font-bold">
                             {analysis.clean_accuracy?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded border border-emerald-200 dark:border-emerald-800">
-                        <strong className="text-gray-700 dark:text-gray-300">Clean + DP Protection Accuracy:</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded border border-emerald-200 dark:border-emerald-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">Clean + DP Protection Accuracy</strong>
                         <span className="font-mono text-emerald-700 dark:text-emerald-400 text-base font-bold">
                             {analysis.clean_dp_accuracy?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-800">
-                        <strong className="text-gray-700 dark:text-gray-300">Poisoned Accuracy:</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">Poisoned Accuracy</strong>
                         <span className="font-mono text-red-700 dark:text-red-400 text-base font-bold">
                             {analysis.poisoned_accuracy?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-teal-50 dark:bg-teal-900/20 rounded border border-teal-200 dark:border-teal-800">
-                        <strong className="text-gray-700 dark:text-gray-300">Poisoned + DP Protection Accuracy:</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-teal-50 dark:bg-teal-900/20 rounded border border-teal-200 dark:border-teal-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">Poisoned + DP Protection Accuracy</strong>
                         <span className="font-mono text-teal-700 dark:text-teal-400 text-base font-bold">
                             {analysis.poisoned_dp_accuracy?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-orange-50 dark:bg-orange-900/20 rounded border border-orange-200 dark:border-orange-800">
-                        <strong className="text-gray-700 dark:text-gray-300">Drop (Clean - Poisoned):</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-orange-50 dark:bg-orange-900/20 rounded border border-orange-200 dark:border-orange-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">Drop (Clean - Poisoned)</strong>
                         <span className="font-mono text-orange-700 dark:text-orange-400 text-base font-bold">
                             {analysis.accuracy_drop?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
-                        <strong className="text-gray-700 dark:text-gray-300">Drop (Clean - Init):</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">Drop (Clean - Init)</strong>
                         <span className="font-mono text-blue-700 dark:text-blue-400 text-base font-bold">
                             {analysis.drop_clean_init?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
-                        <strong className="text-gray-700 dark:text-gray-300">Drop (Clean DP - Init):</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">Drop (Clean DP - Init)</strong>
                         <span className="font-mono text-blue-700 dark:text-blue-400 text-base font-bold">
                             {analysis.drop_clean_dp_init?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
-                        <strong className="text-gray-700 dark:text-gray-300">Drop (Poisoned - Init):</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">Drop (Poisoned - Init)</strong>
                         <span className="font-mono text-blue-700 dark:text-blue-400 text-base font-bold">
                             {analysis.drop_poison_init?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
-                        <strong className="text-gray-700 dark:text-gray-300">Drop (Poisoned DP - Init):</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">Drop (Poisoned DP - Init)</strong>
                         <span className="font-mono text-blue-700 dark:text-blue-400 text-base font-bold">
                             {analysis.drop_poison_dp_init?.toFixed(4) || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-cyan-50 dark:bg-cyan-900/20 rounded border border-cyan-200 dark:border-cyan-800">
-                        <strong className="text-gray-700 dark:text-gray-300">DP Protection Method:</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-cyan-50 dark:bg-cyan-900/20 rounded border border-cyan-200 dark:border-cyan-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">DP Protection Method</strong>
                         <span className="font-mono text-cyan-700 dark:text-cyan-400 text-base font-bold">
                             {analysis.data_poison_protection_method || 'N/A'}
                         </span>
                     </div>
-                    <div className="flex justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
-                        <strong className="text-gray-700 dark:text-gray-300">GPU Used:</strong>
+                    <div className={`${flexDir} justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800`}>
+                        <strong className="text-gray-700 dark:text-gray-300">GPU Used</strong>
                         <span className="font-mono text-blue-700 dark:text-blue-400">
                             {analysis.gpu_used || 'N/A'}
                         </span>

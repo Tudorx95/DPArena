@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { File, X, ChevronDown, ChevronRight, Plus, Folder, FolderOpen, FileSpreadsheet } from 'lucide-react';
+import { File, Trash2, ChevronDown, ChevronRight, Plus, Folder, FolderOpen, FileSpreadsheet } from 'lucide-react';
 
 export default function Sidebar({
     isOpen,
@@ -356,7 +356,7 @@ export default function Sidebar({
                                                 className="p-1 hover:bg-red-100 dark:hover:bg-red-900/50 rounded"
                                                 title="Delete Project"
                                             >
-                                                <X className="w-3 h-3 text-red-600 dark:text-red-400" />
+                                                <Trash2 className="w-3 h-3 text-red-600 dark:text-red-400" />
                                             </button>
                                         )}
                                     </div>
@@ -459,7 +459,7 @@ export default function Sidebar({
                                                                 className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/50 rounded flex-shrink-0"
                                                                 title="Delete File"
                                                             >
-                                                                <X className="w-3 h-3 text-red-600 dark:text-red-400" />
+                                                                <Trash2 className="w-3 h-3 text-red-600 dark:text-red-400" />
                                                             </button>
                                                         )}
                                                     </div>
