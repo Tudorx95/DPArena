@@ -92,6 +92,11 @@ def label_flip(class_names: List[str], current_class: str,
         Noua clasă
     """
     if target_class and target_class in class_names:
+        if current_class == target_class:
+            # Imaginea aparține deja clasei target — flip la o clasă aleatorie
+            # pentru a asigura că poisoning-ul are efect real
+            available = [c for c in class_names if c != current_class]
+            return random.choice(available) if available else current_class
         return target_class
     available = [c for c in class_names if c != current_class]
     return random.choice(available) if available else current_class

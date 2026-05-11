@@ -883,8 +883,9 @@ class EnhancedFederatedServer:
             # Agregare weights
             client_weights = [upd['weights'] for upd in round_updates]
             client_ids = [upd['client_id'] for upd in round_updates]
-            client_sizes = [1] * len(round_updates)
+            client_sizes = [upd.get('dataset_size', 1) for upd in round_updates]
             
+            debug(f"  Client dataset sizes (n_k): {dict(zip(client_ids, client_sizes))}")
             debug(f"  Aggregating with {self.data_poison_protection} ({len(client_weights)} clients, {len(client_weights[0])} layers)...")
             try:
                 self.global_weights = self._aggregate_weights(client_weights, client_sizes, client_ids)
@@ -1044,8 +1045,20 @@ class EnhancedFederatedClient:
     
     def train_one_round(self, round_nr):
         """Antrenează modelul pentru o rundă"""
+        train_size = 1  # default (McMahan et al., 2017 — FedAvg ponderat cu n_k)
         try:
             data_path = self._get_data_path(round_nr)
+            
+            # Numără sample-urile de antrenare pentru ponderare FedAvg
+            _train_dir = os.path.join(data_path, 'train')
+            if os.path.exists(_train_dir):
+                _count = sum(
+                    len([f for f in os.listdir(os.path.join(_train_dir, c))
+                         if os.path.isfile(os.path.join(_train_dir, c, f))])
+                    for c in os.listdir(_train_dir)
+                    if os.path.isdir(os.path.join(_train_dir, c))
+                )
+                train_size = max(_count, 1)
             
             # Încarcă date
             if self.use_template and TEMPLATE_FUNCS.has_function('load_client_data'):
@@ -1131,7 +1144,7 @@ class EnhancedFederatedClient:
         # (semaforul GPU îl mută înapoi în blocul finally din train_one_round)
         weights = get_model_weights_framework_agnostic(self.model, self.use_template)
         
-        return weights, accuracy, precision, recall, f1
+        return weights, accuracy, precision, recall, f1, train_size
     
     def run(self):
         """Rulează client-ul"""
@@ -1178,7 +1191,7 @@ class EnhancedFederatedClient:
         
         # Rundele de antrenare
         for round_nr in range(self.rounds):
-            weights, accuracy, precision, recall, f1 = self.train_one_round(round_nr)
+            weights, accuracy, precision, recall, f1, train_size = self.train_one_round(round_nr)
             
             if weights is not None:
                 update = {
@@ -1190,7 +1203,8 @@ class EnhancedFederatedClient:
                     'precision': precision,
                     'recall': recall,
                     'f1_score': f1,
-                    'timestamp': time.time()
+                    'timestamp': time.time(),
+                    'dataset_size': train_size
                 }
                 self.server.server_queue.put(update)
                 
