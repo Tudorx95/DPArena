@@ -12,6 +12,7 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
         NN_NAME: 'SimpleNN',
         R: 5,
         ROUNDS: 10,
+        EPOCHS: 3,
         strategy: 'first',
         poison_operation: 'backdoor_blended',
         poison_intensity: 0.1,
@@ -23,7 +24,10 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
         pattern_type: 'random',
         modification: 'green_tint',
         transform: 'rotation',
-        watermark_type: 'apple'
+        watermark_type: 'apple',
+        data_distribution: 'fixed',
+        dominant_percentage: 80,
+        dirichlet_alpha: 0.5
     });
 
     // Custom aggregation functions state (fetched from API on mount)
@@ -335,6 +339,74 @@ export default function SimulationOptions({ onClose, onSave, initialConfig, apiU
                                 />
                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Rounds using poisoned data</p>
                             </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Local Epochs per Round (E)
+                                </label>
+                                <input
+                                    type="number"
+                                    value={config.EPOCHS}
+                                    onChange={(e) => handleChange('EPOCHS', parseInt(e.target.value))}
+                                    min="1"
+                                    max="20"
+                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                    required
+                                />
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Training epochs each client runs per FL round</p>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Data Distribution
+                                </label>
+                                <select
+                                    value={config.data_distribution}
+                                    onChange={(e) => handleChange('data_distribution', e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                >
+                                    <option value="fixed">Fixed Non-IID (dominant class %)</option>
+                                    <option value="dirichlet">Dirichlet Non-IID (α parameter)</option>
+                                </select>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">How data is distributed among clients</p>
+                            </div>
+
+                            {config.data_distribution === 'fixed' && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                        Dominant Class %
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={config.dominant_percentage}
+                                        onChange={(e) => handleChange('dominant_percentage', parseInt(e.target.value))}
+                                        min="50"
+                                        max="100"
+                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                        required
+                                    />
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">% of data from the dominant class per client (rest is shared)</p>
+                                </div>
+                            )}
+
+                            {config.data_distribution === 'dirichlet' && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                        Dirichlet α (concentration)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={config.dirichlet_alpha}
+                                        onChange={(e) => handleChange('dirichlet_alpha', parseFloat(e.target.value))}
+                                        min="0.01"
+                                        max="100"
+                                        step="0.1"
+                                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                        required
+                                    />
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Lower = more Non-IID, Higher = more IID (0.01-100)</p>
+                                </div>
+                            )}
                         </div>
                     </div>
 

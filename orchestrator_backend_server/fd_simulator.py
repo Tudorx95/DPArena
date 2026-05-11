@@ -319,7 +319,8 @@ def get_model_output_shape(model):
 class EnhancedFederatedServer:
     def __init__(self, num_clients, num_malicious, nn_path, nn_name, data_folder, alternative_data,
                  rounds, r, strategy="first", data_poisoning=False, use_template=False,
-                 test_json_path=None, data_poison_protection='fedavg', custom_aggregation_path=None):
+                 test_json_path=None, data_poison_protection='fedavg', custom_aggregation_path=None,
+                 epochs_per_round=3):
         self.num_clients = num_clients
         self.num_malicious = num_malicious
         self.nn_path = nn_path
@@ -333,6 +334,7 @@ class EnhancedFederatedServer:
         self.use_template = use_template
         self.data_poison_protection = data_poison_protection
         self.custom_aggregation_path = custom_aggregation_path
+        self.epochs_per_round = epochs_per_round
         
         # JSON Metrics Manager
         self.test_json_path = test_json_path
@@ -1007,7 +1009,8 @@ class EnhancedFederatedServer:
             'protection_method': self.data_poison_protection,
             'total_rounds': self.rounds,
             'num_clients': self.num_clients,
-            'num_malicious': self.num_malicious
+            'num_malicious': self.num_malicious,
+            'epochs_per_round': self.epochs_per_round
         }
         
         self.json_manager.write_metrics(results)
@@ -1019,7 +1022,7 @@ class EnhancedFederatedServer:
 # ============================================================================
 class EnhancedFederatedClient:
     def __init__(self, client_id, server, data_folder, alternative_data, r, rounds, 
-                 strategy, nn_path, use_template=False):
+                 strategy, nn_path, use_template=False, epochs_per_round=3):
         self.client_id = client_id
         self.server = server
         self.data_folder = data_folder
@@ -1029,6 +1032,7 @@ class EnhancedFederatedClient:
         self.strategy = strategy
         self.nn_path = nn_path
         self.use_template = use_template
+        self.epochs_per_round = epochs_per_round
         
         self.is_malicious = client_id in server.malicious_clients
         self.client_type = "malicious" if self.is_malicious else "honest"
@@ -1081,7 +1085,7 @@ class EnhancedFederatedClient:
                     # Antrenare
                     if self.use_template and TEMPLATE_FUNCS.has_function('train_neural_network'):
                         train_func = TEMPLATE_FUNCS.get_function('train_neural_network')
-                        train_func(self.model, train_ds, epochs=3, verbose=0)
+                        train_func(self.model, train_ds, epochs=self.epochs_per_round, verbose=0)
                     else:
                         raise RuntimeError("train_neural_network() required in template_code.py for PyTorch")
                     
@@ -1112,9 +1116,9 @@ class EnhancedFederatedClient:
                 # Antrenare
                 if self.use_template and TEMPLATE_FUNCS.has_function('train_neural_network'):
                     train_func = TEMPLATE_FUNCS.get_function('train_neural_network')
-                    train_func(self.model, train_ds, epochs=3, verbose=0)
+                    train_func(self.model, train_ds, epochs=self.epochs_per_round, verbose=0)
                 else:
-                    self.model.fit(train_ds, epochs=3, verbose=0)
+                    self.model.fit(train_ds, epochs=self.epochs_per_round, verbose=0)
                 
                 # Evaluare
                 y_true, y_pred = [], []
@@ -1262,6 +1266,8 @@ def main():
                        help='Path to custom aggregation function file (.py)')
     parser.add_argument('--template', type=str, default=None,
                        help='Path to template_code.py for importing custom functions')
+    parser.add_argument('--epochs', type=int, default=3,
+                       help='Number of local training epochs per FL round (default: 3)')
     
     args = parser.parse_args()
     
@@ -1323,7 +1329,8 @@ def main():
         args.data_folder, args.alternative_data,
         args.ROUNDS, args.R, args.strategy, args.data_poisoning,
         use_template, args.test_file, args.data_poison_protection,
-        custom_aggregation_path=args.custom_aggregation
+        custom_aggregation_path=args.custom_aggregation,
+        epochs_per_round=args.epochs
     )
     
     # Creează clienți
@@ -1345,7 +1352,8 @@ def main():
         client = EnhancedFederatedClient(
             i, server, client_data,
             client_alt_data, args.R, 
-            args.ROUNDS, args.strategy, model_path, use_template
+            args.ROUNDS, args.strategy, model_path, use_template,
+            epochs_per_round=args.epochs
         )
         clients.append(client)
         thread = threading.Thread(target=client.run, name=f"Client-{i}")

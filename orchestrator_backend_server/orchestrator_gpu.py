@@ -33,7 +33,7 @@ app.logger.setLevel(logging.INFO)
 
 # Config
 VALID_USERS = {"tudor": "magma28fr"}
-BASE_DIR = Path("/home/tudor.lepadatu/Licenta/Part2/fl_simulations")
+BASE_DIR = Path("/mnt/ssd/tudor.lepadatu/fl_simulations")
 CONDA_BASE = Path("/home/tudor.lepadatu/anaconda3")
 
 CONDA_TENSORFLOW_ENV = "fl_tensorflow"
@@ -194,7 +194,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             capture_output=True, 
             text=True, 
             executable="/bin/bash", 
-            timeout=600,
+            timeout=1200,
             env=env_cpu_only
         )
         
@@ -232,7 +232,10 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         cmd = (
             f"{conda_activate} && python {partition_script} "
             f"--data_dir {user_dir / 'clean_data'} "
-            f"--num_clients {config['N']}"
+            f"--num_clients {config['N']} "
+            f"--distribution {config.get('data_distribution', 'fixed')} "
+            f"--dominant_pct {config.get('dominant_percentage', 80)} "
+            f"--dirichlet_alpha {config.get('dirichlet_alpha', 0.5)}"
         )
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env_cpu_only)
         if result.returncode != 0:
@@ -343,7 +346,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             capture_output=True, 
             text=True, 
             executable="/bin/bash", 
-            timeout=600,
+            timeout=1200,
             env=env  # Pass modified environment
         )
         
@@ -417,7 +420,8 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             f"{config['R']} "
             f"{config['ROUNDS']} "
             f"--strategy {config['strategy']} "
-            f"--data_poison_protection fedavg"
+            f"--data_poison_protection fedavg "
+            f"--epochs {config.get('EPOCHS', 3)}"
         )
 
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env)
@@ -456,7 +460,8 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             f"{config['R']} "
             f"{config['ROUNDS']} "
             f"--strategy {config['strategy']} "
-            f"--data_poison_protection {config.get('data_poison_protection', 'fedavg')}"
+            f"--data_poison_protection {config.get('data_poison_protection', 'fedavg')} "
+            f"--epochs {config.get('EPOCHS', 3)}"
         )
         # If custom aggregation (@ prefix), add the path to the custom function file
         protection = config.get('data_poison_protection', 'fedavg')
@@ -502,7 +507,8 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             f"{config['ROUNDS']} "
             f"--strategy {config['strategy']} "
             f"--data_poisoning "
-            f"--data_poison_protection fedavg"
+            f"--data_poison_protection fedavg "
+            f"--epochs {config.get('EPOCHS', 3)}"
         )
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env)
         if result.returncode != 0:
@@ -541,7 +547,8 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             f"{config['ROUNDS']} "
             f"--strategy {config['strategy']} "
             f"--data_poisoning "
-            f"--data_poison_protection {config.get('data_poison_protection', 'fedavg')}"
+            f"--data_poison_protection {config.get('data_poison_protection', 'fedavg')} "
+            f"--epochs {config.get('EPOCHS', 3)}"
         )
         # If custom aggregation (@ prefix), add the path to the custom function file
         if protection.startswith('@'):
@@ -661,7 +668,11 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             'poisoned_metrics': poisoned_results,
             'poisoned_dp_metrics': poisoned_dp_results,
             'gpu_used': gpu_info,
-            'data_poison_protection_method': config.get('data_poison_protection', 'fedavg')
+            'data_poison_protection_method': config.get('data_poison_protection', 'fedavg'),
+            'epochs_per_round': config.get('EPOCHS', 3),
+            'data_distribution': config.get('data_distribution', 'fixed'),
+            'dominant_percentage': config.get('dominant_percentage', 80),
+            'dirichlet_alpha': config.get('dirichlet_alpha', 0.5)
         }
 
         analysis_path = user_dir / "results" / "analysis.json"

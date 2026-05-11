@@ -390,7 +390,15 @@ export default function OutputCell({ output, isLoading, orchestratorStatus, onCa
                                 if (config.NN_NAME) lines.push(`  • Model: ${config.NN_NAME}`);
                                 if (config.N != null) lines.push(`  • Clients: ${config.N}${config.M != null ? ` (Malicious: ${config.M})` : ''}`);
                                 if (config.ROUNDS != null) lines.push(`  • Rounds: ${config.ROUNDS}${config.R != null ? ` (Poisoned: ${config.R})` : ''}`);
+                                lines.push(`  • Local Epochs: ${config.EPOCHS || 3}`);
                                 if (config.strategy) lines.push(`  • Strategy: ${config.strategy}`);
+                                if (config.data_distribution) {
+                                    if (config.data_distribution === 'dirichlet') {
+                                        lines.push(`  • Data Distribution: Dirichlet (α=${config.dirichlet_alpha || 0.5})`);
+                                    } else {
+                                        lines.push(`  • Data Distribution: Fixed Non-IID (${config.dominant_percentage || 80}% dominant)`);
+                                    }
+                                }
                                 if (config.poison_operation) {
                                     lines.push('');
                                     lines.push('🦠 Data Poisoning Attack:');

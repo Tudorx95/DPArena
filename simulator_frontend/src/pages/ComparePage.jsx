@@ -289,6 +289,18 @@ function ResultBox({ title, data, reversed = false }) {
                         <strong>Strategy</strong>
                         <span className="font-mono">{config.strategy || 'N/A'}</span>
                     </div>
+                    <div className={`${flexDir} justify-between`}>
+                        <strong>Local Epochs (E)</strong>
+                        <span className="font-mono text-indigo-700 dark:text-indigo-400">{config.EPOCHS || 3}</span>
+                    </div>
+                    <div className={`${flexDir} justify-between`}>
+                        <strong>Data Distribution</strong>
+                        <span className="font-mono">
+                            {config.data_distribution === 'dirichlet'
+                                ? `Dirichlet (α=${config.dirichlet_alpha || 0.5})`
+                                : `Fixed Non-IID (${config.dominant_percentage || 80}% dominant)`}
+                        </span>
+                    </div>
                 </div>
             </div>
 
