@@ -62,6 +62,8 @@ export default function ExportPDFButton({ results, fileName }) {
                 pdf.text(`Poisoned Rounds (R): ${config.R || 'N/A'}`, 25, y);
                 y += 6;
                 pdf.text(`Distribution Strategy: ${config.strategy || 'N/A'}`, 25, y);
+                y += 6;
+                pdf.text(`Local Epochs (E): ${config.EPOCHS || 3}`, 25, y);
                 y += 12;
             }
 
