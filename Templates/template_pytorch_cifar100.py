@@ -215,14 +215,18 @@ def download_data(output_dir: str):
         
         for idx in range(len(dataset)):
             image, label = dataset[idx]
+            # permute rearanjeaza channelurile imaginii pt ca in Pytorch sunt C x H x W (channel, height, width) si in general sunt H x W x C la librariile de imagistica
+            # .numpy() transforma tensorul intr un array numpy
+            # * 255 inmulteste cu 255 pt a obtine valori intre 0 si 255 
+            # .astype(np.uint8) transforma arrayul numpy intr un array de bytes
             image_np = (image.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
             pil_image = Image.fromarray(image_np)
             
             class_dir = split_dir / str(label)
-            image_path = class_dir / f"img_{image_counters[label]:05d}.png"
+            image_path = class_dir / f"img_{image_counters[label]:05d}.png" # 05d adauga zerouri in fata la numar pt a avea mereu 5 cifre
             
-            pil_image.save(image_path)
-            image_counters[label] += 1
+            pil_image.save(image_path) # salva imaginea in folderul corespunzator
+            image_counters[label] += 1 # incrementeaza contorul pt clasa respectiva
             
             if idx % 1000 == 0:
                 print(f"Processed {idx}/{len(dataset)} images in {split_name}")
@@ -305,22 +309,33 @@ def get_data_preprocessing():
     return preprocess
 
 def validate_model_structure(model: nn.Module) -> Dict[str, Any]:
+    # numel() returneaza numarul de elemente dintr-un tensor (produsul dimensiunilor)
     total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # requires_grad returneaza True daca tensorul trebuie antrenat (daca backpropagation o sa calculeze gradienti si pt el)
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad) 
     non_trainable_params = total_params - trainable_params
+    # modules() returneaza toate modulele/layerele din model
     layers_count = len(list(model.modules())) - 1
     
     input_shape = f"(None, 3, {IMG_SIZE[0]}, {IMG_SIZE[1]})"
     output_shape = f"(None, {NUM_CLASSES})"
     
     model_info = {
+        # __class__.__name__ returneaza numele clasei (in cazul acesta ResNet18)
         'model_name': model.__class__.__name__,
+        # total_params este numarul total de parametri ai modelului (si antrenabili si neantrenabili)
         'total_params': int(total_params),
+        # trainable_params este numarul de parametri care vor fi antrenati
         'trainable_params': int(trainable_params),
+        # non_trainable_params este numarul de parametri care nu vor fi antrenati
         'non_trainable_params': int(non_trainable_params),
+        # layers_count este numarul de layere din model
         'layers_count': layers_count,
+        # input_shape este forma datelor de intrare
         'input_shape': input_shape,
+        # output_shape este forma datelor de iesire
         'output_shape': output_shape,
+        # is_compiled este True daca modelul a fost compilat (daca are loss si optimizer)
         'is_compiled': hasattr(model, 'is_compiled') and model.is_compiled
     }
     
@@ -351,25 +366,35 @@ def train_neural_network(
                 labels = torch.argmax(labels, dim=1)
             
             labels = labels.to(DEVICE)
+            # optimizer.zero_grad() reseteaza gradienții modelului la 0, pt ca altfel se aduna cu gradientii dinainte
             optimizer.zero_grad()
-            
+            # face forward pass, adica modelul prezice clasa pt fiecare imagine din batch
             outputs = model(images)
+            # calculeaza loss-ul, adica cat de mult greseste modelul
             loss = criterion(outputs, labels)
-            
+            # face backpropagation, adica calculeaza gradientii si updates ponderi
             loss.backward()
+            # face update-ul ponderilor, in functie de gradienții calculați și de strategia optimizatorului
             optimizer.step()
             
             running_loss += loss.item()
+            # returneaza clasa prezisa de model
             _, predicted = torch.max(outputs.data, 1)
+            # adauga numarul de imagini din batch la total
             total += labels.size(0)
+            # adauga numarul de predictii corecte la numarul total de predictii
+            # .item() returneaza valoarea tensorului ca numar normal
             correct += (predicted == labels).sum().item()
             
             if verbose >= 2 and batch_idx % 100 == 0:
                 print(f'Epoch [{epoch+1}/{epochs}], Step [{batch_idx}/{len(train_data)}], Loss: {loss.item():.4f}')
         
+        # impartim loss-ul total la numarul de batchuri pt a obtine loss-ul mediu
         epoch_loss = running_loss / len(train_data)
+        # impartim numarul total de predictii corecte la numarul total de predictii pt a obtine accuracy-ul mediu
         epoch_acc = correct / total
         
+        # adaugam loss-ul mediu si accuracy-ul mediu in history
         history['loss'].append(float(epoch_loss))
         history['accuracy'].append(float(epoch_acc))
         
@@ -382,20 +407,26 @@ def train_neural_network(
 def calculate_metrics(
     model: nn.Module, test_dataset: DataLoader, average: str = 'macro'
 ) -> Dict[str, float]:
+    # setam modelul in modul eval() pt a dezactiva dropout si batch normalization
     model.eval()
     y_true_list = []
     y_pred_list = []
     
+    # torch.no_grad() este folosit pt a dezactiva calculul gradientilor, pt ca la evaluare nu avem nevoie de gradienti
     with torch.no_grad():
         for images, labels in test_dataset:
             images = images.to(DEVICE)
             
             outputs = model(images)
+            # returneaza clasa prezisa de model
             _, predicted = torch.max(outputs.data, 1)
             
             if len(labels.shape) > 1 and labels.shape[1] == NUM_CLASSES:
                 labels = torch.argmax(labels, dim=1)
             
+            # .cpu() muta tensorul pe CPU, in caz ca era pe GPU
+            # .numpy() converteste tensorul in array numpy
+            # .extend() adauga elementele arrayului in lista
             y_true_list.extend(labels.cpu().numpy())
             y_pred_list.extend(predicted.cpu().numpy())
     
