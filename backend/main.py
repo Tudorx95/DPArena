@@ -201,11 +201,24 @@ class SimulationConfig(BaseModel):
     NN_NAME: str
     R: int
     ROUNDS: int
+    EPOCHS: int = 3
     strategy: str = "first"
     poison_operation: str = "label_flip"
     poison_intensity: float = 0.1
     poison_percentage: float = 0.2
     data_poison_protection: str = "fedavg"
+    # Data distribution parameters
+    data_distribution: str = "fixed"
+    dominant_percentage: float = 80.0
+    dirichlet_alpha: float = 0.5
+    # Attack-specific sub-parameters
+    target_class: Optional[str] = None
+    no_flip: Optional[bool] = None
+    trigger_type: Optional[str] = None
+    pattern_type: Optional[str] = None
+    modification: Optional[str] = None
+    transform: Optional[str] = None
+    watermark_type: Optional[str] = None
 
 class RunRequest(BaseModel):
     filename: str
@@ -697,22 +710,15 @@ def send_simulation_to_orchestrator(task_id: str, template_code: str, config: Si
         raise HTTPException(status_code=503, detail="Cannot connect to orchestrator server")
     
     # Prepare simulation command
+    # Send the full config dict so all fields (EPOCHS, data_distribution,
+    # dirichlet_alpha, attack sub-params, etc.) reach the orchestrator
+    # and are persisted in simulation_config.json.
+    config_dict = config.dict(exclude_none=True)
     simulation_data = {
         "task_id": task_id,
         "user_id": user_id,
         "template_code": template_code,
-        "config": {
-            "N": config.N,
-            "M": config.M,
-            "NN_NAME": config.NN_NAME,
-            "R": config.R,
-            "ROUNDS": config.ROUNDS,
-            "strategy": config.strategy,
-            "poison_operation": config.poison_operation,
-            "poison_intensity": config.poison_intensity,
-            "poison_percentage": config.poison_percentage,
-            "data_poison_protection": config.data_poison_protection
-        }
+        "config": config_dict
     }
     
     try:

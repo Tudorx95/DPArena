@@ -62,10 +62,24 @@ export const SimulationProvider = ({ children }) => {
             NN_NAME: 'SimpleNN',
             R: 5,
             ROUNDS: 10,
+            EPOCHS: 3,
             strategy: 'first',
             poison_operation: 'backdoor_blended',
             poison_intensity: 0.1,
-            poison_percentage: 0.2
+            poison_percentage: 0.2,
+            data_poison_protection: 'fedavg',
+            // Data distribution parameters
+            data_distribution: 'fixed',
+            dominant_percentage: 80,
+            dirichlet_alpha: 0.5,
+            // Attack-specific sub-parameters
+            target_class: '',
+            no_flip: false,
+            trigger_type: 'square',
+            pattern_type: 'random',
+            modification: 'green_tint',
+            transform: 'rotation',
+            watermark_type: 'apple'
         };
         try {
             const saved = localStorage.getItem(STORAGE_KEYS.CONFIG);
@@ -75,7 +89,8 @@ export const SimulationProvider = ({ children }) => {
                 if (!VALID_POISON_OPERATIONS.includes(parsed.poison_operation)) {
                     parsed.poison_operation = defaultConfig.poison_operation;
                 }
-                return parsed;
+                // Merge defaults so newly-added fields are always present
+                return { ...defaultConfig, ...parsed };
             }
             return defaultConfig;
         } catch (error) {
