@@ -227,73 +227,110 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             app.logger.error(error_msg)
             return
         
-        # ========== STEP 3b: Partition data for FL clients (Non-IID) ==========
-        partition_script = Path(__file__).parent / "partition_data_fl.py"
-        cmd = (
-            f"{conda_activate} && python {partition_script} "
-            f"--data_dir {user_dir / 'clean_data'} "
-            f"--num_clients {config['N']} "
-            f"--distribution {config.get('data_distribution', 'fixed')} "
-            f"--dominant_pct {config.get('dominant_percentage', 80)} "
-            f"--dirichlet_alpha {config.get('dirichlet_alpha', 0.5)}"
-        )
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env_cpu_only)
-        if result.returncode != 0:
-            error_msg = f"Data partitioning failed: {result.stderr}\nStdout: {result.stdout}"
-            shared_simulations[task_id] = {"status": "error", "message": error_msg, "step": 3}
-            app.logger.error(error_msg)
-            return
-        app.logger.info(f"Data partitioned: {result.stdout}")
+        # Step 3b (partition_data_fl) REMOVED — generate_folds.py handles distribution now
+        app.logger.info(f"[{task_id}] ✓ Data downloaded (fold mode — partition skipped)")
         
-        # ========== STEP 4: Data Poisoning ==========
+        # ========== STEP 4a: Generate Clean Folds ==========
         shared_simulations[task_id] = {
-            "status": "running", 
-            "step": 4, 
-            "message": "Poisoning data...", 
+            "status": "running",
+            "step": 4,
+            "message": "Generating clean fold mappings...",
             "pid": process_pid
         }
-        
+
         # Check for cancellation
         if task_id not in shared_simulations or shared_simulations[task_id].get("status") == "cancelling":
             raise InterruptedError("Simulation cancelled by user")
 
-        poison_script = Path(__file__).parent / "poison_data.py"
-        test_file = user_dir / "results" / "attack_info.json"
-        
-        # Auto-set target_class for label_flip (targeted flip is much stronger)
+        # Auto-set target_class for label_flip
         if not config.get('target_class') and config.get('poison_operation') == 'label_flip':
             config['target_class'] = '0'
-        
-        cmd = (
+
+        generate_folds_script = Path(__file__).parent / "generate_folds.py"
+        generate_poisoned_script = Path(__file__).parent / "generate_poisoned_per_client.py"
+        data_distribution_clean_dir = user_dir / "data_distribution_clean"
+        data_distribution_poisoned_dir = user_dir / "data_distribution_poisoned"
+
+        cmd_clean = (
             f"{conda_activate} && "
-            f"python {poison_script} {test_file} {config['NN_NAME']} {user_dir / 'clean_data'} "
-            f"--operation {config['poison_operation']} "
-            f"--intensity {config['poison_intensity']} "
-            f"--percentage {config['poison_percentage']} "
+            f"python {generate_folds_script} "
+            f"--data_dir {user_dir / 'clean_data' / 'data'} "
+            f"--output_dir {data_distribution_clean_dir} "
             f"--num_clients {config['N']} "
             f"--num_malicious {config['M']} "
-            f"--strategy {config['strategy']}"
+            f"--num_rounds {config['ROUNDS']} "
+            f"--num_folds 5 "
+            f"--strategy {config['strategy']} "
+            f"--distribution {config.get('data_distribution', 'fixed')} "
+            f"--dominant_pct {config.get('dominant_percentage', 80)} "
+            f"--dirichlet_alpha {config.get('dirichlet_alpha', 0.5)}"
         )
-        # Optional v2 parameters
-        if config.get('target_class'):
-            cmd += f" --target_class {config['target_class']}"
-        if config.get('no_flip'):
-            cmd += " --no_flip"
-        if config.get('trigger_type'):
-            cmd += f" --trigger_type {config['trigger_type']}"
-        if config.get('pattern_type'):
-            cmd += f" --pattern_type {config['pattern_type']}"
-        if config.get('modification'):
-            cmd += f" --modification {config['modification']}"
-        if config.get('transform'):
-            cmd += f" --transform {config['transform']}"
-        
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env_cpu_only)
-        if result.returncode != 0:
-            error_msg = f"Poison data failed: {result.stderr}\nStdout: {result.stdout}"
+
+        result_clean = subprocess.run(cmd_clean, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env_cpu_only)
+        if result_clean.returncode != 0:
+            error_msg = f"Generate clean folds failed: {result_clean.stderr}\nStdout: {result_clean.stdout}"
             shared_simulations[task_id] = {"status": "error", "message": error_msg, "step": 4}
             app.logger.error(error_msg)
             return
+
+        app.logger.info(f"[{task_id}] ✓ Clean fold mappings generated")
+
+        # ========== STEP 4b: Generate Per-Client Per-Round Poisoned Data ==========
+        shared_simulations[task_id] = {
+            "status": "running",
+            "step": 4,
+            "message": "Generating per-client per-round poisoned data...",
+            "pid": process_pid
+        }
+
+        if task_id not in shared_simulations or shared_simulations[task_id].get("status") == "cancelling":
+            raise InterruptedError("Simulation cancelled by user")
+
+        cmd_poisoned = (
+            f"{conda_activate} && "
+            f"python {generate_poisoned_script} "
+            f"--clean_data_dir {user_dir / 'clean_data' / 'data'} "
+            f"--clean_dist_dir {data_distribution_clean_dir} "
+            f"--poisoned_data_dir {user_dir / 'clean_data_poisoned'} "
+            f"--poisoned_dist_dir {data_distribution_poisoned_dir} "
+            f"--num_clients {config['N']} "
+            f"--num_malicious {config['M']} "
+            f"--strategy {config['strategy']} "
+            f"--operation {config['poison_operation']} "
+            f"--intensity {config['poison_intensity']} "
+            f"--poison_percentage {config['poison_percentage']}"
+        )
+        # Optional parameters
+        if config.get('target_class'):
+            cmd_poisoned += f" --target_class {config['target_class']}"
+        if config.get('no_flip'):
+            cmd_poisoned += " --no_flip"
+        if config.get('trigger_type'):
+            cmd_poisoned += f" --trigger_type {config['trigger_type']}"
+        if config.get('pattern_type'):
+            cmd_poisoned += f" --pattern_type {config['pattern_type']}"
+        if config.get('modification'):
+            cmd_poisoned += f" --modification {config['modification']}"
+        if config.get('transform'):
+            cmd_poisoned += f" --transform {config['transform']}"
+        if config.get('watermark_type'):
+            cmd_poisoned += f" --watermark_type {config['watermark_type']}"
+
+        result_poisoned = subprocess.run(cmd_poisoned, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env_cpu_only)
+        if result_poisoned.returncode != 0:
+            error_msg = f"Per-client poisoning failed: {result_poisoned.stderr}\nStdout: {result_poisoned.stdout}"
+            shared_simulations[task_id] = {"status": "error", "message": error_msg, "step": 4}
+            app.logger.error(error_msg)
+            return
+
+        # Copy attack_info.json into results/ for compatibility
+        attack_info_src = user_dir / "clean_data_poisoned" / "attack_info.json"
+        attack_info_dst = user_dir / "results" / "attack_info.json"
+        if attack_info_src.exists():
+            attack_info_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(attack_info_src, attack_info_dst)
+
+        app.logger.info(f"[{task_id}] ✓ Per-client per-round poisoned data generated")
         
         # ========== STEP 5: Allocate GPU ==========
         app.logger.info(f"[{task_id}] Allocating GPU...")
@@ -421,7 +458,8 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             f"{config['ROUNDS']} "
             f"--strategy {config['strategy']} "
             f"--data_poison_protection fedavg "
-            f"--epochs {config.get('EPOCHS', 3)}"
+            f"--epochs {config.get('EPOCHS', 3)} "
+            f"--data_distribution_dir {data_distribution_clean_dir}"
         )
 
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env)
@@ -451,17 +489,18 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         cmd = (
             f"{conda_activate} && "
             f"python {fd_script} "
-            f"{test_file_clean_dp} "                  # test_file (full path)
+            f"{test_file_clean_dp} "
             f"{config['N']} "
             f"{config['M']} "
-            f"{model_path} "                        # NN_NAME_PATH (full model path)
+            f"{model_path} "
             f"{user_dir / 'clean_data'} "
             f"{user_dir / 'clean_data'} "
             f"{config['R']} "
             f"{config['ROUNDS']} "
             f"--strategy {config['strategy']} "
             f"--data_poison_protection {config.get('data_poison_protection', 'fedavg')} "
-            f"--epochs {config.get('EPOCHS', 3)}"
+            f"--epochs {config.get('EPOCHS', 3)} "
+            f"--data_distribution_dir {data_distribution_clean_dir}"
         )
         # If custom aggregation (@ prefix), add the path to the custom function file
         protection = config.get('data_poison_protection', 'fedavg')
@@ -508,7 +547,8 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             f"--strategy {config['strategy']} "
             f"--data_poisoning "
             f"--data_poison_protection fedavg "
-            f"--epochs {config.get('EPOCHS', 3)}"
+            f"--epochs {config.get('EPOCHS', 3)} "
+            f"--data_distribution_dir {data_distribution_poisoned_dir}"
         )
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable="/bin/bash", env=env)
         if result.returncode != 0:
@@ -537,10 +577,10 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         cmd = (
             f"{conda_activate} && "
             f"python {fd_script} "
-            f"{test_file_poisoned_dp} "                  # test_file (full path)
+            f"{test_file_poisoned_dp} "
             f"{config['N']} "
             f"{config['M']} "
-            f"{model_path} "                        # NN_NAME_PATH (full model path)
+            f"{model_path} "
             f"{user_dir / 'clean_data'} "
             f"{user_dir / 'clean_data_poisoned'} "
             f"{config['R']} "
@@ -548,7 +588,8 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             f"--strategy {config['strategy']} "
             f"--data_poisoning "
             f"--data_poison_protection {config.get('data_poison_protection', 'fedavg')} "
-            f"--epochs {config.get('EPOCHS', 3)}"
+            f"--epochs {config.get('EPOCHS', 3)} "
+            f"--data_distribution_dir {data_distribution_poisoned_dir}"
         )
         # If custom aggregation (@ prefix), add the path to the custom function file
         if protection.startswith('@'):

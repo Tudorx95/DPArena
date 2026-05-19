@@ -60,21 +60,22 @@ def extract_labels(input_dir: str) -> List[str]:
         labels.update(test_labels.flatten() if hasattr(test_labels, 'flatten') else test_labels)
     
     if not labels:
-        for subset in ['train', 'test']:
+        for subset in ['data', 'train', 'test']:
             subset_dir = os.path.join(input_dir, subset)
             if os.path.exists(subset_dir):
-                labels.update([d for d in os.listdir(subset_dir) 
+                labels.update([d for d in os.listdir(subset_dir)
                               if os.path.isdir(os.path.join(subset_dir, d))])
-    
-    metadata_path = os.path.join(input_dir, 'metadata.json')
-    if os.path.exists(metadata_path):
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-        if 'class_names' in metadata:
-            return sorted(metadata['class_names'])
-        elif 'num_classes' in metadata:
-            return [str(i) for i in range(metadata['num_classes'])]
-    
+
+    if not labels:
+        metadata_path = os.path.join(input_dir, 'metadata.json')
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            if 'class_names' in metadata:
+                return sorted(metadata['class_names'])
+            elif 'num_classes' in metadata:
+                return [str(i) for i in range(metadata['num_classes'])]
+
     return sorted([str(label) for label in labels])
 
 
@@ -551,6 +552,12 @@ def apply_poisoning(
     NU face fine-tuning sau orice operație pe model.
     Datele poisoned vor fi folosite ulterior la antrenare.
     
+    Suportă două structuri de directoare:
+      - Fold mode: input_dir/data/<class>/  (nou, cross-validation)
+      - Legacy mode: input_dir/train/<class>/ (vechi, train/test split)
+    
+    Generează poison_mapping.json cu maparea fișierelor mutate (pt label_flip).
+    
     Args:
         test_file: Calea către fișierul JSON pentru metrici
         nn_name: Numele rețelei neuronale
@@ -586,8 +593,25 @@ def apply_poisoning(
     total_poisoned = 0
     poisoned_per_class = {}
     
+    # Poison mapping: tracks file relocations (for label_flip)
+    # Format: {"original_relative_path": "new_relative_path"}
+    poison_file_mappings = {}
+    
+    # Detectare automată structură: data/ (fold mode) sau train/ (legacy)
+    subsets_to_process = []
+    if os.path.exists(os.path.join(output_dir, 'data')):
+        subsets_to_process.append('data')
+    if os.path.exists(os.path.join(output_dir, 'train')):
+        subsets_to_process.append('train')
+    
+    if not subsets_to_process:
+        print(f"WARNING: No 'data/' or 'train/' directory found in {output_dir}")
+        return
+    
+    print(f"Processing subsets: {subsets_to_process}")
+    
     # Procesează fiecare subset
-    for subset in ['train']:
+    for subset in subsets_to_process:
         subset_dir = os.path.join(output_dir, subset)
         
         if not os.path.exists(subset_dir):
@@ -610,6 +634,9 @@ def apply_poisoning(
                 
                 try:
                     image = Image.open(img_path).convert('RGB')
+                    
+                    # Cale relativă la subset (ex: "0/img001.jpg")
+                    rel_path = f"{class_name}/{img_file}"
                     
                     # Aplică atacul
                     if operation.startswith('@'):
@@ -641,6 +668,7 @@ def apply_poisoning(
                                 new_path = os.path.join(subset_dir, str(new_class), img_file)
                                 os.makedirs(os.path.dirname(new_path), exist_ok=True)
                                 shutil.move(img_path, new_path)
+                                poison_file_mappings[rel_path] = f"{new_class}/{img_file}"
                                 
                         except Exception as e:
                             print(f"ERROR: Custom poisoning execution failed for {func_name}: {e}\nHalting simulation.", file=sys.stderr)
@@ -652,7 +680,10 @@ def apply_poisoning(
                         new_class = label_flip(class_names, class_name, target_class)
                         new_path = os.path.join(subset_dir, str(new_class), img_file)
                         shutil.move(img_path, new_path)
+                        # Track relocation
+                        poison_file_mappings[rel_path] = f"{new_class}/{img_file}"
                         total_poisoned += 1
+                        poisoned_per_class[class_name] = poisoned_per_class.get(class_name, 0) + 1
                         continue
                         
                     elif operation == 'backdoor_badnets':
@@ -711,12 +742,24 @@ def apply_poisoning(
                             new_path = os.path.join(subset_dir, str(new_class), img_file)
                             os.makedirs(os.path.dirname(new_path), exist_ok=True)
                             shutil.move(img_path, new_path)
+                            # Track relocation
+                            poison_file_mappings[rel_path] = f"{new_class}/{img_file}"
                     
                     total_poisoned += 1
                     poisoned_per_class[class_name] = poisoned_per_class.get(class_name, 0) + 1
                     
                 except Exception as e:
                     print(f"Error processing {img_file}: {e}")
+    
+    # Scrie poison_mapping.json (pentru generate_folds.py — traducerea căilor malicioase)
+    poison_mapping = {
+        "operation": operation,
+        "mappings": poison_file_mappings
+    }
+    poison_mapping_path = os.path.join(output_dir, "poison_mapping.json")
+    with open(poison_mapping_path, 'w', encoding='utf-8') as f:
+        json.dump(poison_mapping, f, ensure_ascii=False, indent=2)
+    print(f"Poison mapping written: {poison_mapping_path} ({len(poison_file_mappings)} relocations)")
     
     # Scrie informațiile despre atac
     attack_info = {
@@ -741,6 +784,7 @@ def apply_poisoning(
     print("=" * 70)
     print(f"Total images poisoned: {total_poisoned}")
     print(f"Per class: {poisoned_per_class}")
+    print(f"File relocations (label changes): {len(poison_file_mappings)}")
     print(f"Output: {output_dir}")
     print(f"Attack info: {test_file}")
     print("=" * 70)
@@ -825,55 +869,70 @@ Exemple:
         'seed': 42
     }
     
+    # Poison entire dataset (fold mode or legacy mode)
+    # In fold mode: generate_folds.py handles per-client mapping via poison_mapping.json
+    # In legacy mode (--num_clients > 0): backward compatible per-client poisoning
     if args.num_clients > 0 and args.num_malicious > 0:
-        # ====== FL MODE: Per-client poisoning ======
-        # Determină clienții malițioși
-        if args.strategy == 'first':
-            malicious_ids = list(range(args.num_malicious))
-        elif args.strategy == 'last':
-            malicious_ids = list(range(args.num_clients - args.num_malicious, args.num_clients))
-        else:  # alternate
-            malicious_ids = list(range(0, args.num_clients, 2))[:args.num_malicious]
+        # Check if fold mode (data/ exists) or legacy mode (client_*/ exists)
+        has_data_dir = (input_dir / 'data').exists()
+        has_client_dirs = any((input_dir / f'client_0').exists() for _ in [0])
         
-        print(f"FL Mode: {args.num_clients} clients, {args.num_malicious} malicious: {malicious_ids}")
-        
-        # Creează output dir structure: copiază toți clienții
-        import shutil
-        if os.path.exists(str(output_dir)):
-            shutil.rmtree(str(output_dir))
-        
-        # Copiază întreaga structură clean_data (inclusiv client_*/...)
-        shutil.copytree(str(input_dir), str(output_dir))
-        
-        # Aplică poisoning DOAR pe clienții malițioși
-        total_poisoned_all = 0
-        for client_id in malicious_ids:
-            client_input = input_dir / f"client_{client_id}"
-            client_output = output_dir / f"client_{client_id}"
-            
-            if not client_input.exists():
-                print(f"WARNING: client_{client_id} not found in {input_dir}")
-                continue
-            
-            print(f"Poisoning client_{client_id}...")
-            
-            # Aplică poisoning pe datele acestui client
-            # Re-folosim apply_poisoning dar pe directorul clientului
+        if has_data_dir:
+            # ====== FOLD MODE: Poison entire dataset, generate_folds.py maps per-client ======
+            print(f"FL Fold Mode: Poisoning entire dataset (generate_folds.py handles per-client mapping)")
             apply_poisoning(
                 test_file=args.test_file,
                 nn_name=args.nn_name,
-                input_dir=str(client_input),
-                output_dir=str(client_output),
+                input_dir=str(input_dir),
+                output_dir=str(output_dir),
                 operation=args.operation,
                 intensity=args.intensity,
                 percentage=args.percentage,
                 target_class=args.target_class,
                 trigger_params=trigger_params
             )
-        
-        print(f"FL poisoning complete. Malicious clients: {malicious_ids}")
+        elif has_client_dirs:
+            # ====== LEGACY MODE: Per-client poisoning ======
+            if args.strategy == 'first':
+                malicious_ids = list(range(args.num_malicious))
+            elif args.strategy == 'last':
+                malicious_ids = list(range(args.num_clients - args.num_malicious, args.num_clients))
+            else:  # alternate
+                malicious_ids = list(range(0, args.num_clients, 2))[:args.num_malicious]
+            
+            print(f"FL Legacy Mode: {args.num_clients} clients, {args.num_malicious} malicious: {malicious_ids}")
+            
+            import shutil
+            if os.path.exists(str(output_dir)):
+                shutil.rmtree(str(output_dir))
+            shutil.copytree(str(input_dir), str(output_dir))
+            
+            for client_id in malicious_ids:
+                client_input = input_dir / f"client_{client_id}"
+                client_output = output_dir / f"client_{client_id}"
+                
+                if not client_input.exists():
+                    print(f"WARNING: client_{client_id} not found in {input_dir}")
+                    continue
+                
+                print(f"Poisoning client_{client_id}...")
+                apply_poisoning(
+                    test_file=args.test_file,
+                    nn_name=args.nn_name,
+                    input_dir=str(client_input),
+                    output_dir=str(client_output),
+                    operation=args.operation,
+                    intensity=args.intensity,
+                    percentage=args.percentage,
+                    target_class=args.target_class,
+                    trigger_params=trigger_params
+                )
+            
+            print(f"FL poisoning complete. Malicious clients: {malicious_ids}")
+        else:
+            print(f"WARNING: Neither data/ nor client_*/ found in {input_dir}")
     else:
-        # ====== LEGACY MODE: Poison entire dataset ======
+        # ====== SIMPLE MODE: Poison entire dataset ======
         apply_poisoning(
             test_file=args.test_file,
             nn_name=args.nn_name,

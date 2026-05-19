@@ -26,6 +26,7 @@ import json
 import glob
 from collections import defaultdict
 from pathlib import Path
+from PIL import Image as PILImage
 
 try:
     from filelock import FileLock
@@ -314,13 +315,105 @@ def get_model_output_shape(model):
 
 
 # ============================================================================
+# FILE LIST DATASET (for fold-based cross-validation)
+# ============================================================================
+
+class FileListDatasetPyTorch:
+    """PyTorch Dataset that loads images from a list of relative file paths."""
+    
+    def __init__(self, base_dir, file_list, transform=None):
+        self.base_dir = Path(base_dir)
+        self.file_list = file_list
+        self.transform = transform
+        self.samples = []
+        
+        for rel_path in file_list:
+            # rel_path format: "class_name/filename.jpg"
+            class_name = rel_path.split('/')[0]
+            class_idx = int(class_name)  # Assumes numeric class names
+            full_path = self.base_dir / rel_path
+            if full_path.exists():
+                self.samples.append((full_path, class_idx))
+    
+    def __len__(self):
+        return len(self.samples)
+    
+    def __getitem__(self, idx):
+        img_path, label = self.samples[idx]
+        image = PILImage.open(img_path).convert('RGB')
+        
+        if self.transform:
+            image = self.transform(image)
+        
+        return image, label
+
+
+def create_dataloader_from_file_list(base_dir, file_list, batch_size=32, shuffle=True):
+    """Create a DataLoader (PyTorch) or tf.data.Dataset (TF) from a file list."""
+    if not file_list:
+        return None
+    
+    transform = None
+    if TEMPLATE_FUNCS.has_function('preprocess_transform'):
+        transform = TEMPLATE_FUNCS.get_function('preprocess_transform')()
+    
+    if FRAMEWORK == 'pytorch':
+        from torch.utils.data import DataLoader
+        dataset = FileListDatasetPyTorch(base_dir, file_list, transform=transform)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0)
+    else:  # tensorflow
+        # Load images into memory and create tf.data.Dataset
+        images, labels = [], []
+        base = Path(base_dir)
+        
+        img_format = None
+        if TEMPLATE_FUNCS.has_function('get_image_format'):
+            img_format = TEMPLATE_FUNCS.get_function('get_image_format')()
+        
+        img_size = img_format.get('size', (32, 32)) if img_format else (32, 32)
+        num_channels = img_format.get('channels', 3) if img_format else 3
+        
+        for rel_path in file_list:
+            full_path = base / rel_path
+            if not full_path.exists():
+                continue
+            class_name = rel_path.split('/')[0]
+            img = tf.io.read_file(str(full_path))
+            img = tf.image.decode_image(img, channels=num_channels, expand_animations=False)
+            img = tf.image.resize(img, img_size)
+            images.append(img)
+            labels.append(int(class_name))
+        
+        if not images:
+            return None
+        
+        images_tensor = tf.stack(images)
+        labels_tensor = tf.constant(labels, dtype=tf.int32)
+        
+        # Apply preprocessing if available
+        preprocess_fn = None
+        if TEMPLATE_FUNCS.has_function('preprocess'):
+            preprocess_fn = TEMPLATE_FUNCS.get_function('preprocess')
+        elif TEMPLATE_FUNCS.has_function('get_data_preprocessing'):
+            preprocess_fn = TEMPLATE_FUNCS.get_function('get_data_preprocessing')()
+        
+        ds = tf.data.Dataset.from_tensor_slices((images_tensor, labels_tensor))
+        if preprocess_fn:
+            ds = ds.map(preprocess_fn, num_parallel_calls=tf.data.AUTOTUNE)
+        if shuffle:
+            ds = ds.shuffle(buffer_size=min(len(images), 10000))
+        ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+        return ds
+
+
+# ============================================================================
 # ENHANCED FEDERATED SERVER
 # ============================================================================
 class EnhancedFederatedServer:
     def __init__(self, num_clients, num_malicious, nn_path, nn_name, data_folder, alternative_data,
                  rounds, r, strategy="first", data_poisoning=False, use_template=False,
                  test_json_path=None, data_poison_protection='fedavg', custom_aggregation_path=None,
-                 epochs_per_round=3):
+                 epochs_per_round=3, data_distribution_dir=None):
         self.num_clients = num_clients
         self.num_malicious = num_malicious
         self.nn_path = nn_path
@@ -335,6 +428,16 @@ class EnhancedFederatedServer:
         self.data_poison_protection = data_poison_protection
         self.custom_aggregation_path = custom_aggregation_path
         self.epochs_per_round = epochs_per_round
+        self.data_distribution_dir = data_distribution_dir
+        
+        # Cross-validation: load validation.json if fold mode
+        self.validation_data = None
+        if data_distribution_dir and os.path.exists(data_distribution_dir):
+            val_path = os.path.join(data_distribution_dir, 'validation.json')
+            if os.path.exists(val_path):
+                with open(val_path, 'r') as f:
+                    self.validation_data = json.load(f)
+                logger.info(f"Loaded validation.json: {self.validation_data.get('num_folds', '?')} folds")
         
         # JSON Metrics Manager
         self.test_json_path = test_json_path
@@ -732,14 +835,74 @@ class EnhancedFederatedServer:
             logger.warning("Falling back to FedAvg")
             return self._aggregate_weights_fedavg(client_weights, client_sizes)
     
-    def _evaluate_global_model(self):
-        """Evaluare model global pe date de test"""
+    def _evaluate_global_model(self, round_nr=None):
+        """Evaluare model global pe date de validare (fold-based sau legacy)"""
         try:
+            # FOLD MODE: evaluare pe foldul de validare al rundei curente
+            if self.validation_data and round_nr is not None:
+                round_key = f"R{round_nr}"
+                if round_key in self.validation_data.get('rounds', {}):
+                    val_info = self.validation_data['rounds'][round_key]
+                    val_files = val_info['files']
+                    # Validation uses clean data always
+                    val_base_dir = os.path.join(self.data_folder, 'data')
+                    
+                    logger.info(f"Fold validation: round {round_nr}, fold {val_info.get('fold', '?')}, "
+                               f"{len(val_files)} files from {val_base_dir}")
+                    
+                    val_ds = create_dataloader_from_file_list(
+                        val_base_dir, val_files, batch_size=32, shuffle=False)
+                    
+                    if val_ds is None:
+                        logger.error(f"Could not create validation dataset for round {round_nr}")
+                        return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
+                    
+                    # Evaluate using template or manual
+                    if self.use_template and TEMPLATE_FUNCS.has_function('calculate_metrics'):
+                        calc_metrics_func = TEMPLATE_FUNCS.get_function('calculate_metrics')
+                        metrics = calc_metrics_func(self.global_model, val_ds)
+                        return {
+                            'accuracy': metrics.get('accuracy', 0.0),
+                            'precision': metrics.get('precision', 0.0),
+                            'recall': metrics.get('recall', 0.0),
+                            'f1': metrics.get('f1', metrics.get('f1_score', 0.0))
+                        }
+                    else:
+                        # Manual evaluation
+                        y_true, y_pred = [], []
+                        if FRAMEWORK == 'tensorflow':
+                            for images, labels in val_ds:
+                                predictions = self.global_model.predict(images, verbose=0)
+                                y_pred.extend(np.argmax(predictions, axis=1))
+                                if len(labels.shape) > 1 and labels.shape[-1] > 1:
+                                    y_true.extend(np.argmax(labels.numpy(), axis=1))
+                                else:
+                                    y_true.extend(labels.numpy().flatten())
+                        else:
+                            self.global_model.eval()
+                            with torch.no_grad():
+                                for images, labels in val_ds:
+                                    images = images.to(DEVICE)
+                                    outputs = self.global_model(images)
+                                    _, predicted = torch.max(outputs.data, 1)
+                                    if len(labels.shape) > 1 and labels.shape[1] > 1:
+                                        labels = torch.argmax(labels, dim=1)
+                                    y_true.extend(labels.cpu().numpy())
+                                    y_pred.extend(predicted.cpu().numpy())
+                        
+                        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+                        return {
+                            'accuracy': float(accuracy_score(y_true, y_pred)),
+                            'precision': float(precision_score(y_true, y_pred, average='weighted', zero_division=0)),
+                            'recall': float(recall_score(y_true, y_pred, average='weighted', zero_division=0)),
+                            'f1': float(f1_score(y_true, y_pred, average='weighted', zero_division=0))
+                        }
+            
+            # LEGACY MODE: original behavior
             if self.use_template and TEMPLATE_FUNCS.has_function('load_client_data'):
                 load_data_func = TEMPLATE_FUNCS.get_function('load_client_data')
                 _, test_ds = load_data_func(self.data_folder, batch_size=32)
             else:
-                # Fallback la TensorFlow
                 if FRAMEWORK == 'tensorflow':
                     test_ds = tf.keras.utils.image_dataset_from_directory(
                         os.path.join(self.data_folder, 'test'),
@@ -753,33 +916,28 @@ class EnhancedFederatedServer:
             if self.use_template and TEMPLATE_FUNCS.has_function('calculate_metrics'):
                 calc_metrics_func = TEMPLATE_FUNCS.get_function('calculate_metrics')
                 metrics = calc_metrics_func(self.global_model, test_ds)
-                acc = metrics.get('accuracy', 0.0)
                 return {
-                    'accuracy': acc,
+                    'accuracy': metrics.get('accuracy', 0.0),
                     'precision': metrics.get('precision', 0.0),
                     'recall': metrics.get('recall', 0.0),
                     'f1': metrics.get('f1', metrics.get('f1_score', 0.0))
                 }
             else:
-                # Evaluare manuală
                 y_true, y_pred = [], []
-                
                 if FRAMEWORK == 'tensorflow':
                     for images, labels in test_ds:
                         predictions = self.global_model.predict(images, verbose=0)
                         y_pred.extend(np.argmax(predictions, axis=1))
                         y_true.extend(np.argmax(labels.numpy(), axis=1))
-                else:  # pytorch
+                else:
                     self.global_model.eval()
                     with torch.no_grad():
                         for images, labels in test_ds:
                             images = images.to(DEVICE)
                             outputs = self.global_model(images)
                             _, predicted = torch.max(outputs.data, 1)
-                            
                             if len(labels.shape) > 1 and labels.shape[1] > 1:
                                 labels = torch.argmax(labels, dim=1)
-                            
                             y_true.extend(labels.cpu().numpy())
                             y_pred.extend(predicted.cpu().numpy())
                 
@@ -793,6 +951,8 @@ class EnhancedFederatedServer:
                 
         except Exception as e:
             logger.error(f"Error evaluating global model: {e}")
+            import traceback
+            traceback.print_exc()
             return {'accuracy': 0.0, 'precision': 0.0, 'recall': 0.0, 'f1': 0.0}
     
     def run(self):
@@ -865,7 +1025,9 @@ class EnhancedFederatedServer:
                     update = self.server_queue.get(timeout=min(remaining, 30))
                     if update['type'] == 'round_update' and update['round'] == round_nr:
                         round_updates.append(update)
-                        debug(f"  Received update from client {update['client_id']} (acc={update.get('accuracy', 'N/A'):.4f})")
+                        _acc = update.get('accuracy', 0.0)
+                        _acc_str = "no local eval (fold mode)" if _acc == 0.0 else f"acc={_acc:.4f}"
+                        debug(f"  Received update from client {update['client_id']} ({_acc_str})")
                     elif update['type'] == 'round_update' and update['round'] != round_nr:
                         debug(f"  WARNING: Discarding stale update from client {update['client_id']} (round {update['round']} != {round_nr})")
                     elif update['type'] == 'weights_received':
@@ -914,7 +1076,7 @@ class EnhancedFederatedServer:
             
             # Evaluare
             try:
-                eval_metrics = self._evaluate_global_model()
+                eval_metrics = self._evaluate_global_model(round_nr)
                 global_accuracy = eval_metrics['accuracy']
                 debug(f"  Evaluation: acc={global_accuracy:.4f}")
             except Exception as e:
@@ -985,15 +1147,18 @@ class EnhancedFederatedServer:
         debug(f"=== SERVER.RUN() ENDED ===")
     
     def _save_results(self):
-        """Salvează rezultatele finale"""
+        """Salvează rezultatele finale — metrici medii pe toate rundele (cross-validation)"""
         if not self.json_manager:
             return
         
-        last_round = self.round_metrics_history[-1] if self.round_metrics_history else {}
-        final_accuracy = last_round.get('accuracy', 0.0)
-        final_precision = last_round.get('precision', 0.0)
-        final_recall = last_round.get('recall', 0.0)
-        final_f1 = last_round.get('f1', 0.0)
+        # Cross-validation: media metricilor pe toate rundele
+        if self.round_metrics_history:
+            final_accuracy = float(np.mean([r.get('accuracy', 0.0) for r in self.round_metrics_history]))
+            final_precision = float(np.mean([r.get('precision', 0.0) for r in self.round_metrics_history]))
+            final_recall = float(np.mean([r.get('recall', 0.0) for r in self.round_metrics_history]))
+            final_f1 = float(np.mean([r.get('f1', 0.0) for r in self.round_metrics_history]))
+        else:
+            final_accuracy = final_precision = final_recall = final_f1 = 0.0
         
         results = {
             'final_accuracy': final_accuracy,
@@ -1010,11 +1175,13 @@ class EnhancedFederatedServer:
             'total_rounds': self.rounds,
             'num_clients': self.num_clients,
             'num_malicious': self.num_malicious,
-            'epochs_per_round': self.epochs_per_round
+            'epochs_per_round': self.epochs_per_round,
+            'cross_validation': self.validation_data is not None,
+            'num_folds': self.validation_data.get('num_folds', 0) if self.validation_data else 0
         }
         
         self.json_manager.write_metrics(results)
-        logger.info(f"Results saved to {self.test_json_path}")
+        logger.info(f"Results saved to {self.test_json_path} (avg_acc={final_accuracy:.4f})")
 
 
 # ============================================================================
@@ -1022,7 +1189,8 @@ class EnhancedFederatedServer:
 # ============================================================================
 class EnhancedFederatedClient:
     def __init__(self, client_id, server, data_folder, alternative_data, r, rounds, 
-                 strategy, nn_path, use_template=False, epochs_per_round=3):
+                 strategy, nn_path, use_template=False, epochs_per_round=3,
+                 data_distribution_dir=None):
         self.client_id = client_id
         self.server = server
         self.data_folder = data_folder
@@ -1033,110 +1201,102 @@ class EnhancedFederatedClient:
         self.nn_path = nn_path
         self.use_template = use_template
         self.epochs_per_round = epochs_per_round
+        self.data_distribution_dir = data_distribution_dir
         
         self.is_malicious = client_id in server.malicious_clients
         self.client_type = "malicious" if self.is_malicious else "honest"
+        
+        # Cross-validation: load client JSON mapping if fold mode
+        self.client_fold_data = None
+        if data_distribution_dir and os.path.exists(data_distribution_dir):
+            client_json = os.path.join(data_distribution_dir, f'client_{client_id}.json')
+            if os.path.exists(client_json):
+                with open(client_json, 'r') as f:
+                    self.client_fold_data = json.load(f)
+                logger.info(f"Client {client_id}: Loaded fold data "
+                           f"(malicious={self.client_fold_data.get('is_malicious', False)}, "
+                           f"base_dir={self.client_fold_data.get('base_dir', 'N/A')})")
         
         self.client_queue = server.client_queues[client_id]
         self.model = None
         self.current_weights = None
     
     def _get_data_path(self, round_nr):
-        """Determină path-ul către date pentru rundă"""
+        """Determină path-ul către date pentru rundă (legacy mode)"""
         if self.is_malicious and round_nr < self.R:
             return self.alternative_data
         return self.data_folder
     
     def train_one_round(self, round_nr):
         """Antrenează modelul pentru o rundă"""
-        train_size = 1  # default (McMahan et al., 2017 — FedAvg ponderat cu n_k)
+        train_size = 1  # default
         try:
-            data_path = self._get_data_path(round_nr)
-            
-            # Numără sample-urile de antrenare pentru ponderare FedAvg
-            _train_dir = os.path.join(data_path, 'train')
-            if os.path.exists(_train_dir):
-                _count = sum(
-                    len([f for f in os.listdir(os.path.join(_train_dir, c))
-                         if os.path.isfile(os.path.join(_train_dir, c, f))])
-                    for c in os.listdir(_train_dir)
-                    if os.path.isdir(os.path.join(_train_dir, c))
-                )
-                train_size = max(_count, 1)
-            
-            # Încarcă date
-            if self.use_template and TEMPLATE_FUNCS.has_function('load_client_data'):
-                load_data_func = TEMPLATE_FUNCS.get_function('load_client_data')
-                train_ds, test_ds = load_data_func(data_path, batch_size=32)
+            # FOLD MODE: load data from JSON file list
+            if self.client_fold_data:
+                round_key = f"R{round_nr}"
+                round_info = self.client_fold_data.get('rounds', {}).get(round_key, {})
+                train_files = round_info.get('train_files', [])
+                train_size = round_info.get('train_count', len(train_files))
+                # Per-round base_dir takes precedence (per-client per-round poisoning).
+                # Falls back to top-level base_dir (clean dist) or self.data_folder.
+                base_dir = round_info.get('base_dir') or self.client_fold_data.get('base_dir', self.data_folder)
+                
+                train_ds = create_dataloader_from_file_list(
+                    base_dir, train_files, batch_size=32, shuffle=True)
+                
+                if train_ds is None:
+                    logger.error(f"Client {self.client_id}: No training data for round {round_nr}")
+                    return None, 0.0, 0.0, 0.0, 0.0, 1
+                
+                logger.info(f"Client {self.client_id}: Fold mode R{round_nr}, "
+                           f"{train_size} files from {base_dir}")
             else:
-                raise RuntimeError("load_client_data() required in template_code.py")
+                # LEGACY MODE: original behavior
+                data_path = self._get_data_path(round_nr)
+                
+                _train_dir = os.path.join(data_path, 'train')
+                if os.path.exists(_train_dir):
+                    _count = sum(
+                        len([f for f in os.listdir(os.path.join(_train_dir, c))
+                             if os.path.isfile(os.path.join(_train_dir, c, f))])
+                        for c in os.listdir(_train_dir)
+                        if os.path.isdir(os.path.join(_train_dir, c))
+                    )
+                    train_size = max(_count, 1)
+                
+                if self.use_template and TEMPLATE_FUNCS.has_function('load_client_data'):
+                    load_data_func = TEMPLATE_FUNCS.get_function('load_client_data')
+                    train_ds, _ = load_data_func(data_path, batch_size=32)
+                else:
+                    raise RuntimeError("load_client_data() required in template_code.py")
             
-            # Semafor GPU: limitează câți clienți antrenează pe GPU simultan.
-            # Modelul stă pe CPU între runde; e mutat pe GPU doar aici, cât timp
-            # semaforul este deținut, apoi revine pe CPU înainte de eliberare.
+            # Training with GPU semaphore
             if FRAMEWORK == 'pytorch':
                 _gpu_semaphore.acquire()
                 try:
                     self.model = self.model.to(DEVICE)
-                    
-                    # Setează weights curente
                     set_model_weights_framework_agnostic(self.model, self.current_weights, self.use_template)
                     
-                    # Antrenare
                     if self.use_template and TEMPLATE_FUNCS.has_function('train_neural_network'):
                         train_func = TEMPLATE_FUNCS.get_function('train_neural_network')
                         train_func(self.model, train_ds, epochs=self.epochs_per_round, verbose=0)
                     else:
                         raise RuntimeError("train_neural_network() required in template_code.py for PyTorch")
-                    
-                    # Evaluare
-                    y_true, y_pred = [], []
-                    self.model.eval()
-                    with torch.no_grad():
-                        for images, labels in test_ds:
-                            images = images.to(DEVICE)
-                            outputs = self.model(images)
-                            _, predicted = torch.max(outputs.data, 1)
-                            
-                            if len(labels.shape) > 1 and labels.shape[1] > 1:
-                                labels = torch.argmax(labels, dim=1)
-                            
-                            y_true.extend(labels.cpu().numpy())
-                            y_pred.extend(predicted.cpu().numpy())
                 finally:
-                    # Mută modelul înapoi pe CPU și eliberează VRAM înainte de release semafor
                     self.model = self.model.cpu()
                     torch.cuda.empty_cache()
                     _gpu_semaphore.release()
             else:
-                # TensorFlow — gestionează singur memoria GPU
-                # Setează weights curente
+                # TensorFlow
                 set_model_weights_framework_agnostic(self.model, self.current_weights, self.use_template)
-                
-                # Antrenare
                 if self.use_template and TEMPLATE_FUNCS.has_function('train_neural_network'):
                     train_func = TEMPLATE_FUNCS.get_function('train_neural_network')
                     train_func(self.model, train_ds, epochs=self.epochs_per_round, verbose=0)
                 else:
                     self.model.fit(train_ds, epochs=self.epochs_per_round, verbose=0)
-                
-                # Evaluare
-                y_true, y_pred = [], []
-                for images, labels in test_ds:
-                    predictions = self.model.predict(images, verbose=0)
-                    y_pred.extend(np.argmax(predictions, axis=1))
-                    y_true.extend(np.argmax(labels.numpy(), axis=1))
             
-            # Calculează metrici
-            from sklearn.metrics import accuracy_score
-            accuracy = accuracy_score(y_true, y_pred)
-            
-            if len(y_true) > 0:
-                precision = precision_score(y_true, y_pred, average='weighted', zero_division=0)
-                recall = recall_score(y_true, y_pred, average='weighted', zero_division=0)
-                f1 = f1_score(y_true, y_pred, average='weighted', zero_division=0)
-            else:
-                precision = recall = f1 = 0.0
+            # No local evaluation in fold mode (server does it on validation fold)
+            accuracy = precision = recall = f1 = 0.0
                 
         except Exception as e:
             logger.error(f"Client {self.client_id}: Error during training: {e}")
@@ -1144,8 +1304,6 @@ class EnhancedFederatedClient:
             traceback.print_exc()
             accuracy = precision = recall = f1 = 0.0
         
-        # Extrage weights — pentru PyTorch modelul este deja pe CPU
-        # (semaforul GPU îl mută înapoi în blocul finally din train_one_round)
         weights = get_model_weights_framework_agnostic(self.model, self.use_template)
         
         return weights, accuracy, precision, recall, f1, train_size
@@ -1213,7 +1371,10 @@ class EnhancedFederatedClient:
                 self.server.server_queue.put(update)
                 
                 client_type = "M" if self.is_malicious else "H"
-                logger.info(f"[{client_type}] Client {self.client_id}: Round {round_nr} - Acc: {accuracy:.4f}")
+                if self.client_fold_data:
+                    logger.info(f"[{client_type}] Client {self.client_id}: Round {round_nr} - local training done ({train_size} samples)")
+                else:
+                    logger.info(f"[{client_type}] Client {self.client_id}: Round {round_nr} - Acc: {accuracy:.4f}")
             else:
                 logger.error(f"Client {self.client_id}: Failed round {round_nr}")
             
@@ -1268,6 +1429,8 @@ def main():
                        help='Path to template_code.py for importing custom functions')
     parser.add_argument('--epochs', type=int, default=3,
                        help='Number of local training epochs per FL round (default: 3)')
+    parser.add_argument('--data_distribution_dir', type=str, default=None,
+                       help='Path to data_distribution/ directory for fold-based cross-validation')
     
     args = parser.parse_args()
     
@@ -1281,6 +1444,8 @@ def main():
     logger.info(f"Starting FL Simulator ({FRAMEWORK.upper()})")
     logger.info(f"Model: {model_path}")
     logger.info(f"Data: {args.data_folder}")
+    if args.data_distribution_dir:
+        logger.info(f"Fold mode: {args.data_distribution_dir}")
     
     if not os.path.exists(model_path):
         logger.error(f"Model not found: {model_path}")
@@ -1301,7 +1466,6 @@ def main():
             logger.error(f"Could not load template: {e}")
             return
     else:
-        # Caută template_code.py în directorul curent
         default_template = os.path.join(os.path.dirname(model_path), 'template_code.py')
         if os.path.exists(default_template):
             try:
@@ -1330,30 +1494,38 @@ def main():
         args.ROUNDS, args.R, args.strategy, args.data_poisoning,
         use_template, args.test_file, args.data_poison_protection,
         custom_aggregation_path=args.custom_aggregation,
-        epochs_per_round=args.epochs
+        epochs_per_round=args.epochs,
+        data_distribution_dir=args.data_distribution_dir
     )
     
     # Creează clienți
     clients = []
     client_threads = []
     
+    # Determine if fold mode
+    fold_mode = (args.data_distribution_dir and 
+                 os.path.exists(args.data_distribution_dir) and
+                 os.path.exists(os.path.join(args.data_distribution_dir, 'validation.json')))
+    
     for i in range(args.N):
-        # Fiecare client primește propriul subdirector de date
-        # clean_data/client_0/, clean_data/client_1/, etc.
-        client_data = os.path.join(args.data_folder, f"client_{i}")
-        client_alt_data = os.path.join(args.alternative_data, f"client_{i}")
-        
-        # Fallback: dacă nu există structura per-client, folosește data_folder direct (legacy)
-        if not os.path.exists(client_data):
-            logger.warning(f"Client {i}: per-client data not found at {client_data}, using shared data_folder")
+        if fold_mode:
             client_data = args.data_folder
             client_alt_data = args.alternative_data
+        else:
+            client_data = os.path.join(args.data_folder, f"client_{i}")
+            client_alt_data = os.path.join(args.alternative_data, f"client_{i}")
+            
+            if not os.path.exists(client_data):
+                logger.warning(f"Client {i}: per-client data not found at {client_data}, using shared data_folder")
+                client_data = args.data_folder
+                client_alt_data = args.alternative_data
         
         client = EnhancedFederatedClient(
             i, server, client_data,
             client_alt_data, args.R, 
             args.ROUNDS, args.strategy, model_path, use_template,
-            epochs_per_round=args.epochs
+            epochs_per_round=args.epochs,
+            data_distribution_dir=args.data_distribution_dir if fold_mode else None
         )
         clients.append(client)
         thread = threading.Thread(target=client.run, name=f"Client-{i}")
@@ -1374,13 +1546,11 @@ def main():
         logger.error(f"Server error: {e}")
         import traceback
         traceback.print_exc()
-        # Write error to debug log
         debug_log = os.path.join(os.path.dirname(args.test_file), 
                                   f"debug_{args.data_poison_protection}.log")
         with open(debug_log, 'a') as f:
             f.write(f"\n=== EXCEPTION IN MAIN ===\n{traceback.format_exc()}\n")
     finally:
-        # Always save results even if run() crashed
         if not server.round_metrics_history:
             logger.error(f"No rounds completed for protection={args.data_poison_protection}")
         server._save_results()

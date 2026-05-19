@@ -148,7 +148,6 @@ def test_template():
         # Format: 'function_name': (min_params, description)
         'load_train_test_data':    (0, 'Încărcare date train/test'),
         'preprocess_loaded_data':  (2, 'Preprocesare date'),
-        'load_client_data':        (1, 'Încărcare date FL client'),
         'download_data':           (1, 'Salvare date în format FL'),
         'train_neural_network':    (2, 'Antrenare model'),
         'calculate_metrics':       (2, 'Calculare metrici'),
@@ -287,9 +286,6 @@ def test_template():
     try:
         sig = inspect.signature(template_code.download_data)
         print_status(True, f"download_data({', '.join(sig.parameters.keys())})")
-
-        sig = inspect.signature(template_code.load_client_data)
-        print_status(True, f"load_client_data({', '.join(sig.parameters.keys())})")
 
         sig = inspect.signature(template_code.train_neural_network)
         params = list(sig.parameters.keys())
