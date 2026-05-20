@@ -373,6 +373,7 @@ def main():
                 seed=round_seed
             )
 
+            # numara instantele din fiecare clasa (similar value_counts)
             class_counts = defaultdict(int)
             for fp in new_train_files:
                 cls = fp.split('/')[0]

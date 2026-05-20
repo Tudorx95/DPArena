@@ -246,11 +246,13 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         if not config.get('target_class') and config.get('poison_operation') == 'label_flip':
             config['target_class'] = '0'
 
+
         generate_folds_script = Path(__file__).parent / "generate_folds.py"
         generate_poisoned_script = Path(__file__).parent / "generate_poisoned_per_client.py"
         data_distribution_clean_dir = user_dir / "data_distribution_clean"
         data_distribution_poisoned_dir = user_dir / "data_distribution_poisoned"
 
+        # first generate data_distribution_clean folder -> client distribution on each step 
         cmd_clean = (
             f"{conda_activate} && "
             f"python {generate_folds_script} "
@@ -286,6 +288,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         if task_id not in shared_simulations or shared_simulations[task_id].get("status") == "cancelling":
             raise InterruptedError("Simulation cancelled by user")
 
+        # then generate data_distribution_poison folder -> malicious client distribution on each poison step 
         cmd_poisoned = (
             f"{conda_activate} && "
             f"python {generate_poisoned_script} "

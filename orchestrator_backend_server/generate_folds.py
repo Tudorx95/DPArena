@@ -73,20 +73,6 @@ def create_stratified_folds(data_dir: Path, num_folds: int = 5, seed: int = 42):
     return folds, class_files
 
 
-# ============================================================================
-# NON-IID DISTRIBUTION (reutilizare logică din partition_data_fl.py)
-# ============================================================================
-
-def _group_by_class(file_list):
-    """Grupează fișierele per clasă (din path: 'class/filename')."""
-    class_files = defaultdict(list)
-    for f in file_list:
-        class_name = f.split('/')[0]
-        class_files[class_name] = class_files.get(class_name, [])
-        class_files[class_name].append(f)
-    return dict(class_files)
-
-
 def distribute_fixed(train_files_by_class, num_clients, dominant_pct, seed):
     """
     Fixed Non-IID: X% dominant + (100-X)% uniform.
@@ -308,10 +294,6 @@ def generate_all_mappings(data_dir, output_dir,
     
     print(f"\n✓ All mappings generated in {output_dir}")
 
-
-# ============================================================================
-# CLI
-# ============================================================================
 
 def main():
     parser = argparse.ArgumentParser(
