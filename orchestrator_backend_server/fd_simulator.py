@@ -81,6 +81,9 @@ else:  # pytorch
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+_log_path = Path(__file__).parent.parent / "logs" / "fd_simulator.log"
+_log_path.parent.mkdir(exist_ok=True)
+logging.getLogger().addHandler(logging.FileHandler(_log_path))
 
 # ============================================================================
 # JSON FILE MANAGER (Thread-safe)
