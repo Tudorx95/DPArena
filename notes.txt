@@ -1,0 +1,81 @@
+Constante (toate cele 11 simulări):
+
+Parametru	Valoare	Motivație
+N	10	clienți totali
+M	6	clienți malițioși (60% din total)
+data_distribution	dirichlet	distribuție non-IID
+dirichlet_alpha	0.5	default-ul tău; valori mici = mai non-IID. Recomand să-l ții identic în toate simulările ca să nu introducă varianță
+NN_NAME	(același ca în Tests_1)	model identic cu experimentul original
+R, ROUNDS, EPOCHS	identic cu Tests_1	pentru comparabilitate
+poison_operation	identic cu Tests_1 (probabil label_flip)	atac identic
+poison_intensity	identic cu Tests_1	
+data_poison_protection	FoolsGoldUpdate	apărarea pe care vrei să o stresezi
+Variabilă (doar poison_percentage):
+
+#	poison_pct "% efectiv date corupte"	Calcul
+1	75.00%	45%	6/10 × 0.7500
+2	76.67%	46%	6/10 × 0.7667   -> 0.77
+3	78.33%	47%	6/10 × 0.7833   -> 0.78
+4	80.00%	48%	6/10 × 0.8000
+5	81.67%	49%	6/10 × 0.8167   -> 0.81
+6	83.33%	50%	6/10 × 0.8333   -> 0.83
+7	85.00%	51%	6/10 × 0.8500
+8	86.67%	52%	6/10 × 0.8667   -> 0.87
+9	88.33%	53%	6/10 × 0.8833   -> 0.88
+10	90.00%	54%	6/10 × 0.9000
+11	91.67%	55%	6/10 × 0.9167
+
+
+
+
+N (clienți)              = 10
+R (folduri)              = 5
+ROUNDS                   = 15        # 3 treceri × 5 folduri (multiplu obligatoriu de 5)
+EPOCHS                   = 3
+NN_NAME                  = SimpleNN
+strategy                 = last
+data_distribution        = dirichlet
+dirichlet_alpha          = 0.51      # identic peste TOT (l-ai folosit în rulările reale)
+poison_operation         = label_flip
+poison_intensity         = 0.1
+data_poison_protection   = foolsgold
+seed                     = identic peste tot (pentru comparabilitate)
+
+
+Seria A — variezi intensitatea (M fix = 5)
+Izolează poison_percentage. Aici se închide treptat gap-ul DP−Poisoned.
+
+#	M	poison_percentage	% date infectate = 0.5×pct
+A1	5	1.00	50.0%
+A2	5	0.95	47.5%
+A3	5	0.90	45.0%
+A4	5	0.85	42.5%
+A5	5	0.80	40.0%
+A6	5	0.75	37.5%
+A7	5	0.70	35.0%
+A8	5	0.65	32.5%
+A9	5	0.60	30.0%
+
+Seria B — variezi numărul de atacatori (pct fix = 1.00)
+Izolează M. Aici prinzi pragul unde FoolsGold cedează (în jur de M ≥ N/2).
+
+#	M	poison_percentage	% date infectate = M/10
+B1	1	1.00	10%
+B2	2	1.00	20%
+B3	3	1.00	30%
+B4	4	1.00	40%
+B5	5	1.00	50%
+B6	6	1.00    60%
+
+Punctul A1 = B5 (M=5, pct=1.0) — rulează-l o singură dată, e ancora comună a celor două grafice.
+
+
+Ce as modifica la doc:
+
+pagina 26 de modificat explicatia procesului de otravire.
+
+Procesul de otravire (poisoning) presupune rularea unui script care pe baza parametrilor
+simul ̆arii, aplic ̆a o serie de operat, ii asupra seturilor de date. Tipurile de act, iuni de otr ̆avire
+au fost definite în capitolul 2 (sect, iunea 2.3.3 - Atacul Data poisoning). Utilizatorul poate
+alege procentajul din etichete care s ̆a fie infectate, iar în cazul atacurilor backdoor, se vor
+seta parametrii specifici fiec ̆arui tip de trigger
