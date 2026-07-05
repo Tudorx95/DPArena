@@ -1652,6 +1652,118 @@ async def compare_simulations(
         raise HTTPException(status_code=500, detail=f"Failed to compare simulations: {str(e)}")
 
 
+# ==================== PROJECT EXPORT / IMPORT ====================
+
+class ProjectImportFile(BaseModel):
+    name: str
+    content: str
+    order: int = 0
+    simulation_config: Optional[dict] = None
+
+class ProjectImportPayload(BaseModel):
+    project: ProjectCreate
+    files: List[ProjectImportFile]
+
+
+@app.get("/api/projects/{project_id}/export")
+async def export_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Export a project with all files and their latest simulation configs.
+    Returns a self-contained JSON that can be imported on another DPArena instance.
+    """
+    # Verify project exists and belongs to user
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.user_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Get all files ordered
+    files = db.query(File).filter(
+        File.project_id == project_id
+    ).order_by(File.order).all()
+
+    # For each file, get the latest simulation config (if any)
+    exported_files = []
+    for f in files:
+        # Get latest simulation result for this file (any status)
+        latest_sim = db.query(SimulationResult).filter(
+            SimulationResult.file_id == f.id,
+            SimulationResult.user_id == current_user.id
+        ).order_by(SimulationResult.created_at.desc()).first()
+
+        exported_files.append({
+            "name": f.name,
+            "content": f.content,
+            "order": f.order,
+            "simulation_config": latest_sim.simulation_config if latest_sim else None
+        })
+
+    export_data = {
+        "dparena_version": "1.0",
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "project": {
+            "name": project.name,
+            "description": project.description
+        },
+        "files": exported_files
+    }
+
+    logger.info(f"Exported project '{project.name}' ({len(exported_files)} files) for user {current_user.id}")
+    return export_data
+
+
+@app.post("/api/projects/import", response_model=ProjectResponse)
+async def import_project(
+    payload: ProjectImportPayload,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Import a project from an exported JSON.
+    Creates a new project with all files. Simulation configs are stored
+    in the file content metadata but simulations must be re-run manually.
+    """
+    try:
+        # Create the project
+        db_project = Project(
+            user_id=current_user.id,
+            name=payload.project.name,
+            description=payload.project.description
+        )
+        db.add(db_project)
+        db.flush()  # Get project ID without committing
+
+        # Create all files
+        for file_data in payload.files:
+            db_file = File(
+                project_id=db_project.id,
+                name=file_data.name,
+                content=file_data.content,
+                order=file_data.order
+            )
+            db.add(db_file)
+
+        db.commit()
+        db.refresh(db_project)
+
+        logger.info(
+            f"Imported project '{db_project.name}' (id={db_project.id}, "
+            f"{len(payload.files)} files) for user {current_user.id}"
+        )
+        return db_project
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error importing project: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to import project: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

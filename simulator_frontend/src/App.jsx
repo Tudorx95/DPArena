@@ -12,6 +12,7 @@ import SimulationOptions from './components/SimulationOptions';
 import ComparePage from './pages/ComparePage';
 import GraphsPage from './pages/GraphsPage';
 import MultiExportCSV from './components/MultiExportCSV';
+import { Download, Upload } from 'lucide-react';
 
 function AppContent() {
     const { user, token, loading: authLoading, isAuthenticated } = useAuth();
@@ -56,6 +57,9 @@ function AppContent() {
     const [showComparePage, setShowComparePage] = useState(false);
     const [showGraphsPage, setShowGraphsPage] = useState(false);
     const [showMultiExport, setShowMultiExport] = useState(false);
+
+    // Ref for the hidden file input used by project import
+    const importFileRef = useRef(null);
 
     // Store WebSocket connections per taskId for multiple simultaneous simulations
     const wsRefs = useRef({});
@@ -591,6 +595,83 @@ function AppContent() {
         }
     };
 
+    // Export project as JSON
+    const handleExportProject = async (projectId) => {
+        try {
+            const response = await fetch(`${API_URL}/api/projects/${projectId}/export`, {
+                headers: authHeaders
+            });
+
+            if (!response.ok) throw new Error('Failed to export project');
+
+            const exportData = await response.json();
+            const projectName = exportData.project?.name || 'project';
+            const safeName = projectName.replace(/[^a-z0-9_\-]/gi, '_').toLowerCase();
+
+            // Trigger browser download
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${safeName}_export.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Error exporting project:', error);
+            alert('Failed to export project');
+        }
+    };
+
+    // Import project from JSON file
+    const handleImportProject = async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        // Reset the input so the same file can be re-selected
+        event.target.value = '';
+
+        try {
+            const text = await file.text();
+            const importData = JSON.parse(text);
+
+            // Basic validation
+            if (!importData.project || !importData.files) {
+                alert('Invalid project file. The JSON must contain "project" and "files" fields.');
+                return;
+            }
+
+            const response = await fetch(`${API_URL}/api/projects/import`, {
+                method: 'POST',
+                headers: authHeaders,
+                body: JSON.stringify({
+                    project: importData.project,
+                    files: importData.files
+                })
+            });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || 'Failed to import project');
+            }
+
+            const newProject = await response.json();
+            alert(`Project "${newProject.name}" imported successfully with ${importData.files.length} file(s).`);
+
+            // Reload projects and switch to the imported one
+            await loadProjects();
+            setActiveProjectId(newProject.id);
+        } catch (error) {
+            console.error('Error importing project:', error);
+            if (error instanceof SyntaxError) {
+                alert('Invalid JSON file. Please select a valid DPArena project export.');
+            } else {
+                alert(`Import failed: ${error.message}`);
+            }
+        }
+    };
+
     // Select project
     const handleSelectProject = (projectId) => {
         setActiveProjectId(projectId);
@@ -1068,6 +1149,8 @@ function AppContent() {
                 onCreateProject={handleCreateProject}
                 onCreateFile={handleCreateFile}
                 onShowMultiExport={() => setShowMultiExport(true)}
+                onExportProject={handleExportProject}
+                onImportProject={() => importFileRef.current?.click()}
                 onReorderFiles={handleReorderFiles}
                 onRenameFile={handleRenameFile}
                 onMoveFile={handleMoveFile}
@@ -1154,6 +1237,15 @@ function AppContent() {
                     )}
                 </div>
             </div>
+
+            {/* Hidden file input for project import */}
+            <input
+                ref={importFileRef}
+                type="file"
+                accept=".json"
+                style={{ display: 'none' }}
+                onChange={handleImportProject}
+            />
 
             {/* Simulation Options Modal */}
             {showSimulationOptions && (

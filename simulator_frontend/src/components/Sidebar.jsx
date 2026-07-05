@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { File, Trash2, ChevronDown, ChevronRight, Plus, Folder, FolderOpen, FileSpreadsheet } from 'lucide-react';
+import { File, Trash2, ChevronDown, ChevronRight, Plus, Folder, FolderOpen, FileSpreadsheet, Download, Upload } from 'lucide-react';
 
 export default function Sidebar({
     isOpen,
@@ -13,6 +13,8 @@ export default function Sidebar({
     onCreateProject,
     onCreateFile,
     onShowMultiExport,
+    onExportProject,
+    onImportProject,
     onReorderFiles,
     onRenameFile,
     onMoveFile,
@@ -258,6 +260,27 @@ export default function Sidebar({
                     <FileSpreadsheet className="w-4 h-4" />
                     <span>Multi-Export CSV</span>
                 </button>
+
+                {/* Export / Import Project Buttons */}
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => onExportProject && onExportProject(activeProjectId)}
+                        disabled={!activeProjectId}
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 dark:from-blue-600 dark:to-indigo-600 text-white rounded-lg hover:from-blue-600 hover:to-indigo-600 dark:hover:from-blue-700 dark:hover:to-indigo-700 transition-all shadow-sm hover:shadow-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Export Project as JSON"
+                    >
+                        <Download className="w-4 h-4" />
+                        <span>Export</span>
+                    </button>
+                    <button
+                        onClick={() => onImportProject && onImportProject()}
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-500 dark:from-amber-600 dark:to-orange-600 text-white rounded-lg hover:from-amber-600 hover:to-orange-600 dark:hover:from-amber-700 dark:hover:to-orange-700 transition-all shadow-sm hover:shadow-md text-sm font-medium"
+                        title="Import Project from JSON"
+                    >
+                        <Upload className="w-4 h-4" />
+                        <span>Import</span>
+                    </button>
+                </div>
 
                 {/* New Project Input */}
                 {showNewProjectInput && (
