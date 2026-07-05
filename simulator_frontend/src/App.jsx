@@ -966,6 +966,12 @@ function AppContent() {
     const handleRun = async () => {
         if (!activeFile) return;
 
+        // Prevent double-run if simulation is already in progress
+        if (activeFileSimState.isRunning) {
+            console.warn('[Run] Simulation already running for this file, ignoring.');
+            return;
+        }
+
         if (completedSimulations[activeFileId]) {
             alert('Simulation already completed for this file. No more runs allowed.');
             return;

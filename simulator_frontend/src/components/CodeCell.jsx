@@ -136,7 +136,13 @@ export default function CodeCell({ content, handleContentChange, handleRun, isRu
                     <button
                         onClick={handleRun}
                         disabled={isRunning || isCompleted}
-                        className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 dark:bg-blue-700 text-white text-sm rounded hover:bg-blue-700 dark:hover:bg-blue-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
+                        className={`flex items-center gap-2 px-4 py-1.5 text-white text-sm rounded transition-colors ${
+                            isCompleted
+                                ? 'bg-gray-400 dark:bg-gray-600 cursor-not-allowed'
+                                : isRunning
+                                    ? 'bg-amber-500 dark:bg-amber-600 cursor-not-allowed opacity-90'
+                                    : 'bg-blue-600 dark:bg-blue-700 hover:bg-blue-700 dark:hover:bg-blue-600 cursor-pointer'
+                        }`}
                     >
                         {isCompleted ? (
                             'Simulation Completed - No Run'
