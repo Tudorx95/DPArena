@@ -9,6 +9,7 @@ UPDATED: February 2026
 COMPATIBLE WITH: TensorFlow templates (.keras) și PyTorch templates (.pth)
 """
 
+import os
 import sys
 import traceback
 import inspect
@@ -44,7 +45,7 @@ def verify_function_signature(module, func_name: str, min_params: int = 0) -> Tu
     """
     try:
         func = getattr(module, func_name)
-        sig = inspect.signature(func)
+        sig = inspect.signature(func)   # converteste antetul functiei in obiect Signature
         params = list(sig.parameters.keys())
         if len(params) < min_params:
             return False, params
@@ -345,6 +346,9 @@ def test_template():
         traceback.print_exc()
         return False
 
+    # Initial, aici era si o parte de testare a functiei download_data(), dar si a functiei train_neural_network(),
+    # insa acestea au fost mutate in compute_init_metrics.py. 
+
     # ------------------------------------------------------------------
     # Test 8: Calculare și salvare metrici inițiale
     # ------------------------------------------------------------------
@@ -352,53 +356,67 @@ def test_template():
     init_metrics = {}
     test_ds      = None
 
+    # VERIFY_COMPUTE_METRICS=0 (setat de orchestrator) → sare peste încărcarea
+    # datelor + calculul metricilor aici, pentru că load_train_test_data() ar
+    # declanșa descărcarea lentă a dataset-ului chiar în pasul de verificare
+    # structurală. init-accuracy se calculează ulterior, după download_data()
+    # (vezi compute_init_metrics.py). Rulare standalone (flag absent) ⇒ "1" ⇒
+    # comportament neschimbat: datele se încarcă și metricile se calculează aici.
+    compute_metrics = os.environ.get("VERIFY_COMPUTE_METRICS", "1") != "0"
+    metrics_deferred = not compute_metrics
+
     # 8a — Încărcare date
     try:
-        print("   ⏳ Încărcare date de test pentru evaluare...")
-        train_ds, test_ds = template_code.load_train_test_data()
-        print_status(True, "Date încărcate (train + test)")
-        print(f"   🔍 Tip train_ds: {type(train_ds)}")
-        print(f"   🔍 Tip test_ds:  {type(test_ds)}")
+        if not compute_metrics:
+            print("   ⏭  Calcul metrici inițiale AMÂNAT — init-accuracy se")
+            print("      calculează după download_data() (evită descărcarea")
+            print("      dataset-ului în pasul de verificare structurală).")
+        else:
+            print("   ⏳ Încărcare date de test pentru evaluare...")
+            train_ds, test_ds = template_code.load_train_test_data()
+            print_status(True, "Date încărcate (train + test)")
+            print(f"   🔍 Tip train_ds: {type(train_ds)}")
+            print(f"   🔍 Tip test_ds:  {type(test_ds)}")
 
-        # 8b — Preprocesare
-        print("   ⏳ Preprocesare date...")
-        _, test_ds = template_code.preprocess_loaded_data(train_ds, test_ds)
-        print_status(True, "Date preprocesate")
+            # 8b — Preprocesare
+            print("   ⏳ Preprocesare date...")
+            _, test_ds = template_code.preprocess_loaded_data(train_ds, test_ds)
+            print_status(True, "Date preprocesate")
 
-        # 8c — Verificare format batch (framework-agnostic)
-        print("   🔍 Verificare format date...")
-        batch_checked = False
+            # 8c — Verificare format batch (framework-agnostic)
+            print("   🔍 Verificare format date...")
+            batch_checked = False
 
-        # Încearcă .take(1) — TensorFlow tf.data.Dataset
-        if hasattr(test_ds, 'take'):
-            try:
-                for images, labels in test_ds.take(1):
-                    print(f"      - Images shape: {images.shape}  dtype: {images.dtype}")
-                    print(f"      - Labels shape:  {labels.shape}  dtype: {labels.dtype}")
-                    lshape = labels.shape
-                    if len(lshape) == 2 and lshape[1] > 1:
-                        print_status(True, f"Labels sunt one-hot encoded ({lshape[1]} clase)")
-                    else:
-                        print(f"   ⚠  Labels NU sunt one-hot encoded!")
+            # Încearcă .take(1) — TensorFlow tf.data.Dataset
+            if hasattr(test_ds, 'take'):
+                try:
+                    for images, labels in test_ds.take(1):
+                        print(f"      - Images shape: {images.shape}  dtype: {images.dtype}")
+                        print(f"      - Labels shape:  {labels.shape}  dtype: {labels.dtype}")
+                        lshape = labels.shape
+                        if len(lshape) == 2 and lshape[1] > 1:
+                            print_status(True, f"Labels sunt one-hot encoded ({lshape[1]} clase)")
+                        else:
+                            print(f"   ⚠  Labels NU sunt one-hot encoded!")
+                        batch_checked = True
+                except Exception as e:
+                    print(f"   ⚠  .take(1) eșuat: {e}")
+
+            # Fallback — PyTorch DataLoader (iterare directă, prim batch)
+            if not batch_checked:
+                try:
+                    for images, labels in test_ds:
+                        print(f"      - Images shape: {images.shape}  dtype: {images.dtype}")
+                        print(f"      - Labels shape:  {labels.shape}  dtype: {labels.dtype}")
+                        lshape = labels.shape
+                        if len(lshape) == 2 and lshape[1] > 1:
+                            print_status(True, f"Labels sunt one-hot encoded ({lshape[1]} clase)")
+                        else:
+                            print(f"   ⚠  Labels NU sunt one-hot encoded!")
+                        break  # Doar primul batch
                     batch_checked = True
-            except Exception as e:
-                print(f"   ⚠  .take(1) eșuat: {e}")
-
-        # Fallback — PyTorch DataLoader (iterare directă, prim batch)
-        if not batch_checked:
-            try:
-                for images, labels in test_ds:
-                    print(f"      - Images shape: {images.shape}  dtype: {images.dtype}")
-                    print(f"      - Labels shape:  {labels.shape}  dtype: {labels.dtype}")
-                    lshape = labels.shape
-                    if len(lshape) == 2 and lshape[1] > 1:
-                        print_status(True, f"Labels sunt one-hot encoded ({lshape[1]} clase)")
-                    else:
-                        print(f"   ⚠  Labels NU sunt one-hot encoded!")
-                    break  # Doar primul batch
-                batch_checked = True
-            except Exception as e:
-                print(f"   ⚠  Nu s-a putut verifica batch-ul: {e}")
+                except Exception as e:
+                    print(f"   ⚠  Nu s-a putut verifica batch-ul: {e}")
 
     except Exception as e:
         print_status(False, f"Nu s-au putut încărca datele de test: {e}")
@@ -447,6 +465,9 @@ def test_template():
             "initial_metrics": {
                 k: float(v) for k, v in init_metrics.items()
             },
+            # True ⇒ metricile inițiale nu au fost calculate aici (calcul amânat
+            # post-download); orchestratorul le completează cu compute_init_metrics.py.
+            "initial_metrics_pending": metrics_deferred,
             "weights_info": {
                 "total_weight_layers": len(weights),
                 "weights_extractable": True,

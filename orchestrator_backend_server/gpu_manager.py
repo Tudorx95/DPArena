@@ -331,6 +331,7 @@ def run_with_gpu_allocation(gpu_manager: GPUManager, task_id: str,
     try:
         framework = kwargs.get('framework', 'tensorflow')
         if framework == 'tensorflow':
+            # For tensorflow, we can set memory growth or limit before any TF ops
             memory_limit = gpu_manager.get_gpu_memory_limit(gpu_id)
             configure_tensorflow_gpu(gpu_id, memory_limit)
         elif framework == 'pytorch':

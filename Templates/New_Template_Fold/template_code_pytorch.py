@@ -13,6 +13,7 @@ Diferențe față de template-ul clasic:
 - load_client_data() NU mai este definit — simulatorul folosește FileListDataset
 - preprocess_transform() adăugat — folosit de FileListDatasetPyTorch din fd_simulator
 """
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -37,6 +38,12 @@ NUM_CLASSES = 10
 IMG_SIZE = (32, 32)
 HUGGINGFACE_REPO_ID = "edadaltocg/resnet18_cifar10"
 MODEL_FILENAME = "pytorch_model.bin"
+
+# Director dataset. Dacă DATASET_CACHE_DIR e setat (de orchestrator) și conține
+# deja cifar-10-python.tar.gz sau folderul extras, torchvision îl folosește de
+# acolo și NU mai descarcă de pe serverul lent (cave.cs.toronto.edu). Altfel,
+# fallback la './data' (comportament vechi — descarcă la runtime).
+DATASET_ROOT = os.environ.get("DATASET_CACHE_DIR", "").strip() or "./data"
 
 # Device configuration
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -96,14 +103,14 @@ def load_train_test_data() -> Tuple[DataLoader, DataLoader]:
     ])
     
     train_dataset = torchvision.datasets.CIFAR10(
-        root='./data',
+        root=DATASET_ROOT,
         train=True,
         download=True,
         transform=basic_transform
     )
     
     test_dataset = torchvision.datasets.CIFAR10(
-        root='./data',
+        root=DATASET_ROOT,
         train=False,
         download=True,
         transform=basic_transform
@@ -190,14 +197,14 @@ def download_data(output_dir: str):
     transform = transforms.ToTensor()
     
     train_dataset = torchvision.datasets.CIFAR10(
-        root='./data',
+        root=DATASET_ROOT,
         train=True,
         download=True,
         transform=transform
     )
     
     test_dataset = torchvision.datasets.CIFAR10(
-        root='./data',
+        root=DATASET_ROOT,
         train=False,
         download=True,
         transform=transform

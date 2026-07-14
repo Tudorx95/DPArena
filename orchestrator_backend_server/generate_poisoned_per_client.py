@@ -165,7 +165,7 @@ def poison_client_round(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Decide care fișiere se vor poisona (sample reproductibil per client per rundă)
+    # Decide care fișiere se vor otravi (sample reproductibil per client per rundă)
     rng = random.Random(seed)
     n_files = len(train_files)
     n_poison = int(n_files * poison_percentage)

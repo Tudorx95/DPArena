@@ -168,10 +168,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         model_name = f"{config['NN_NAME']}.{ext}"
         model_path = user_dir / model_name
 
-        # Environment CPU-only: FORȚEAZĂ CPU pentru TOATE subprocesele
-        # de dinainte de alocarea GPU (Steps 2-4).
-        # Fără asta, PyTorch din template_code.py face model.to('cuda:0')
-        # la import/create_model() și crapă cu OOM dacă GPU0 e plin.
+        # Environment CPU-only: FORȚEAZĂ CPU pentru TOATE subprocesele momentan        
         env_cpu_only = os.environ.copy()
         env_cpu_only['CUDA_VISIBLE_DEVICES'] = ''
 
@@ -186,16 +183,20 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         conda_activate = f"source {CONDA_BASE}/bin/activate {conda_env}"
 
         # Verify template before execution (CPU-only — nu necesită GPU)
+        # VERIFY_COMPUTE_METRICS=0 → verificarea sare peste încărcarea datelor +
+        # calculul metricilor (ar declanșa descărcarea lentă a dataset-ului aici).
+        env_verify = env_cpu_only.copy()
+        env_verify['VERIFY_COMPUTE_METRICS'] = '0'
         verify_script = Path(__file__).parent / "verify_template.py"
         cmd_verify = f" {conda_activate} && cd {user_dir} && python {verify_script}"
         result_verify = subprocess.run(
-            cmd_verify, 
-            shell=True, 
-            capture_output=True, 
-            text=True, 
-            executable="/bin/bash", 
+            cmd_verify,
+            shell=True,
+            capture_output=True,
+            text=True,
+            executable="/bin/bash",
             timeout=1200,
-            env=env_cpu_only
+            env=env_verify
         )
         
         if result_verify.returncode != 0:
@@ -227,10 +228,26 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             app.logger.error(error_msg)
             return
         
-        # Step 3b (partition_data_fl) REMOVED — generate_folds.py handles distribution now
-        app.logger.info(f"[{task_id}] ✓ Data downloaded (fold mode — partition skipped)")
+        app.logger.info(f"[{task_id}] ✓ Data downloaded successfully")
+
+        # Calculează init-accuracy acum, când dataset-ul e în cache local
+        # (download_data() tocmai l-a adus). verify_template.py a sărit peste acest
+        # calcul (VERIFY_COMPUTE_METRICS=0) ca să nu descarce datele în pasul de verificare. 
+        compute_metrics_script = Path(__file__).parent / "compute_init_metrics.py"
+        cmd_metrics = f"{conda_activate} && cd {user_dir} && python {compute_metrics_script}"
+        result_metrics = subprocess.run(
+            cmd_metrics, shell=True, capture_output=True, text=True,
+            executable="/bin/bash", env=env_cpu_only
+        )
+        if result_metrics.returncode == 0:
+            app.logger.info(f"[{task_id}] ✓ Initial metrics computed post-download")
+        else:
+            app.logger.warning(
+                f"[{task_id}] ⚠ Initial metrics computation failed (non-fatal): "
+                f"{result_metrics.stderr}"
+            )
         
-        # ========== STEP 4a: Generate Clean Folds ==========
+        # ========== STEP 4: Generate Clean Folds ==========
         shared_simulations[task_id] = {
             "status": "running",
             "step": 4,
@@ -246,7 +263,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
         if not config.get('target_class') and config.get('poison_operation') == 'label_flip':
             config['target_class'] = '0'
 
-
+        # Pregateste scripturile pentru generarea fold-urilor și a datelor per-client
         generate_folds_script = Path(__file__).parent / "generate_folds.py"
         generate_poisoned_script = Path(__file__).parent / "generate_poisoned_per_client.py"
         data_distribution_clean_dir = user_dir / "data_distribution_clean"
@@ -277,7 +294,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
 
         app.logger.info(f"[{task_id}] ✓ Clean fold mappings generated")
 
-        # ========== STEP 4b: Generate Per-Client Per-Round Poisoned Data ==========
+        # ========== Generate Per-Client Per-Round Poisoned Data ==========
         shared_simulations[task_id] = {
             "status": "running",
             "step": 4,
@@ -560,7 +577,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
             app.logger.error(error_msg)
             return
 
-        # ========== STEP 10: FL simulation with Data Poison Protection ==========
+        # ========== STEP 10: Poison simulation with Data Poison Protection ==========
         shared_simulations[task_id] = {
             "status": "running",
             "step": 10,
@@ -669,7 +686,7 @@ def run_simulation_pipeline(task_id, user_id, template_code, config, shared_simu
                 poisoned_dp_accuracy = history[-1].get('accuracy', 0)
                 app.logger.info(f"[{task_id}] Extracted poisoned_dp_accuracy from round_metrics_history: {poisoned_dp_accuracy}")
         
-        # ========== STEP: Citire Init Accuracy ==========
+        # Citire Init Accuracy
         init_accuracy = 0.0
         
         # Încearcă JSON (format nou)
