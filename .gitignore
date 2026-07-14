@@ -2,4 +2,4 @@
 secrets/
 backend/__pycache__/
 orchestrator_backend_server/__pycache__/
-
+notes.txt

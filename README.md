@@ -34,15 +34,15 @@ The platform follows a **two-machine distributed architecture**:
 
 ## Infrastructure Requirements
 
-| Component | Machine 1 — App Server | Machine 2 — GPU Server |
-|-----------|----------------------|----------------------|
-| **Purpose** | Hosts the web UI, API, and database | Runs the actual FL simulations |
-| **Docker** | ✅ Required | ❌ Not required |
-| **GPU** | ❌ Not required | ✅ Required (NVIDIA, CUDA) |
-| **Storage** | ~10 GB (Docker images + DB) | ~50+ GB (datasets, models, conda envs) |
-| **RAM** | 4 GB minimum | 16+ GB recommended |
-| **Software** | Docker, Docker Compose | Python 3.10+, Anaconda, nvidia-smi |
-| **Network** | Must be reachable by users | Must be reachable by Machine 1 |
+| Component    | Machine 1 — App Server              | Machine 2 — GPU Server                 |
+| ------------ | ----------------------------------- | -------------------------------------- |
+| **Purpose**  | Hosts the web UI, API, and database | Runs the actual FL simulations         |
+| **Docker**   | ✅ Required                         | ❌ Not required                        |
+| **GPU**      | ❌ Not required                     | ✅ Required (NVIDIA, CUDA)             |
+| **Storage**  | ~10 GB (Docker images + DB)         | ~50+ GB (datasets, models, conda envs) |
+| **RAM**      | 4 GB minimum                        | 16+ GB recommended                     |
+| **Software** | Docker, Docker Compose              | Python 3.10+, Anaconda, nvidia-smi     |
+| **Network**  | Must be reachable by users          | Must be reachable by Machine 1         |
 
 ---
 
@@ -86,11 +86,11 @@ docker compose up --build -d
 
 This starts three containers:
 
-| Container | Port | Description |
-|-----------|------|-------------|
-| `fl_postgres` | 5432 | PostgreSQL 16 database |
-| `fl_backend` | 8000 | FastAPI REST API + WebSocket |
-| `fl_frontend` | 3000 | React web application |
+| Container     | Port | Description                  |
+| ------------- | ---- | ---------------------------- |
+| `fl_postgres` | 5432 | PostgreSQL 16 database       |
+| `fl_backend`  | 8000 | FastAPI REST API + WebSocket |
+| `fl_frontend` | 3000 | React web application        |
 
 Access the platform at **http://localhost:3000**.
 
@@ -138,6 +138,7 @@ docker compose down && docker compose up --build -d
 #### 6. Demo credentials
 
 A demo user is created automatically:
+
 - **Username:** `demo`
 - **Password:** `demo123`
 
@@ -180,6 +181,7 @@ chmod +x setup_tensorflow_env.sh setup_pytorch_env.sh
 ```
 
 Each script will:
+
 1. Create a dedicated Conda environment (`fl_tensorflow` / `fl_pytorch`) with Python 3.10
 2. Install the ML framework with CUDA support
 3. Install all scientific, data-processing, and networking dependencies (NumPy, Pandas, Matplotlib, scikit-learn, Flask, etc.)
@@ -188,20 +190,20 @@ Each script will:
 <details>
 <summary><strong>setup_tensorflow_env.sh</strong> — packages installed</summary>
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `tensorflow[and-cuda]` | 2.15.1 | TensorFlow with bundled CUDA 12.2 |
-| `numpy` | 1.26.4 | Numerical computing |
-| `pandas` | 2.1.4 | Data manipulation |
-| `matplotlib` | 3.8.4 | Plotting |
-| `scikit-learn` | 1.3.2 | ML utilities & metrics |
-| `Pillow` | 10.4.0 | Image processing |
-| `scipy` | 1.11.4 | Scientific computing |
-| `requests` | 2.32.3 | HTTP client |
-| `flask` | 3.0.3 | Orchestrator API |
-| `flask-cors` | 4.0.1 | CORS middleware |
-| `h5py` | 3.11.0 | HDF5 model storage |
-| `tensorflow-datasets` | 4.9.6 | TF dataset utilities |
+| Package                | Version | Purpose                           |
+| ---------------------- | ------- | --------------------------------- |
+| `tensorflow[and-cuda]` | 2.15.1  | TensorFlow with bundled CUDA 12.2 |
+| `numpy`                | 1.26.4  | Numerical computing               |
+| `pandas`               | 2.1.4   | Data manipulation                 |
+| `matplotlib`           | 3.8.4   | Plotting                          |
+| `scikit-learn`         | 1.3.2   | ML utilities & metrics            |
+| `Pillow`               | 10.4.0  | Image processing                  |
+| `scipy`                | 1.11.4  | Scientific computing              |
+| `requests`             | 2.32.3  | HTTP client                       |
+| `flask`                | 3.0.3   | Orchestrator API                  |
+| `flask-cors`           | 4.0.1   | CORS middleware                   |
+| `h5py`                 | 3.11.0  | HDF5 model storage                |
+| `tensorflow-datasets`  | 4.9.6   | TF dataset utilities              |
 
 > **Note:** Requires NVIDIA driver version ≥ 535 for CUDA 12.2 compatibility.
 
@@ -210,22 +212,22 @@ Each script will:
 <details>
 <summary><strong>setup_pytorch_env.sh</strong> — packages installed</summary>
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `torch` | 2.1.0 | PyTorch (CUDA 12.1 wheel) |
-| `torchvision` | 0.16.0 | Image models & transforms |
-| `torchaudio` | 2.1.0 | Audio processing |
-| `numpy` | 1.26.0 | Numerical computing |
-| `pandas` | 2.1.0 | Data manipulation |
-| `matplotlib` | 3.8.0 | Plotting |
-| `scikit-learn` | 1.3.0 | ML utilities & metrics |
-| `Pillow` | 10.1.0 | Image processing |
-| `scipy` | 1.11.0 | Scientific computing |
-| `requests` | 2.31.0 | HTTP client |
-| `flask` | 3.0.0 | Orchestrator API |
-| `flask-cors` | 4.0.0 | CORS middleware |
-| `torchmetrics` | 1.2.0 | Training metrics |
-| `tensorboard` | 2.15.0 | Training visualization |
+| Package        | Version | Purpose                   |
+| -------------- | ------- | ------------------------- |
+| `torch`        | 2.1.0   | PyTorch (CUDA 12.1 wheel) |
+| `torchvision`  | 0.16.0  | Image models & transforms |
+| `torchaudio`   | 2.1.0   | Audio processing          |
+| `numpy`        | 1.26.0  | Numerical computing       |
+| `pandas`       | 2.1.0   | Data manipulation         |
+| `matplotlib`   | 3.8.0   | Plotting                  |
+| `scikit-learn` | 1.3.0   | ML utilities & metrics    |
+| `Pillow`       | 10.1.0  | Image processing          |
+| `scipy`        | 1.11.0  | Scientific computing      |
+| `requests`     | 2.31.0  | HTTP client               |
+| `flask`        | 3.0.0   | Orchestrator API          |
+| `flask-cors`   | 4.0.0   | CORS middleware           |
+| `torchmetrics` | 1.2.0   | Training metrics          |
+| `tensorboard`  | 2.15.0  | Training visualization    |
 
 </details>
 
@@ -329,12 +331,12 @@ The orchestrator runs the `poison_data.py` script using the attack type and para
 
 With both the clean and poisoned datasets prepared, the pipeline enters the federated learning simulation phase. This phase executes **four distinct scenarios** sequentially using the `fd_simulator.py` script:
 
-| Stage | Scenario | Data | Aggregation | Purpose |
-|-------|----------|------|-------------|---------|
-| **10** | Clean | `clean_data/` | FedAvg | Baseline — ideal (attack-free) conditions |
-| **11** | Clean + Defense | `clean_data/` | User-selected method | Measure defense overhead without attacks |
-| **12** | Poisoned | `clean_data_poisoned/` | FedAvg | Measure attack impact without defense |
-| **13** | Poisoned + Defense | `clean_data_poisoned/` | User-selected method | Evaluate defense effectiveness |
+| Stage  | Scenario           | Data                   | Aggregation          | Purpose                                   |
+| ------ | ------------------ | ---------------------- | -------------------- | ----------------------------------------- |
+| **10** | Clean              | `clean_data/`          | FedAvg               | Baseline — ideal (attack-free) conditions |
+| **11** | Clean + Defense    | `clean_data/`          | User-selected method | Measure defense overhead without attacks  |
+| **12** | Poisoned           | `clean_data_poisoned/` | FedAvg               | Measure attack impact without defense     |
+| **13** | Poisoned + Defense | `clean_data_poisoned/` | User-selected method | Evaluate defense effectiveness            |
 
 - **Scenario 1 (Stage 10)** — The first simulation uses exclusively the clean (unmodified) dataset. Data is distributed across `N` clients, none of which are malicious, and training proceeds for `ROUNDS` rounds using FedAvg. This establishes the baseline performance.
 - **Scenario 2 (Stage 11)** — The second simulation trains the global model on clean data, but replaces FedAvg with the user-selected robust aggregation method. This measures the overhead introduced by the defense in a non-adversarial environment, ensuring it does not significantly degrade model performance.
@@ -350,6 +352,7 @@ After all four federated learning scenarios complete successfully, the orchestra
 - **Precision, Recall, and F1 Score** — weighted average per scenario
 
 Results are saved to:
+
 - `results/analysis.json` — structured JSON with all metrics
 - `results/summary.txt` — human-readable summary
 - `results/attack_info.json` — poisoning attack details
@@ -359,6 +362,7 @@ The orchestrator marks the task as `completed`, and the backend polls these resu
 ### Cancellation Flow
 
 At every pipeline stage, the orchestrator checks if the user has requested cancellation. If so:
+
 1. The running process tree is killed (`kill_process_tree()`)
 2. The allocated GPU is released
 3. The task directory is deleted
@@ -370,37 +374,37 @@ At every pipeline stage, the orchestrator checks if the user has requested cance
 
 ### Simulation Parameters
 
-| Parameter | Description |
-|-----------|-------------|
-| `N` | Total number of FL clients |
-| `M` | Number of malicious clients |
-| `ROUNDS` | Total training rounds |
-| `R` | Number of rounds malicious clients use poisoned data |
-| `NN_NAME` | Neural network model name |
+| Parameter  | Description                                                    |
+| ---------- | -------------------------------------------------------------- |
+| `N`        | Total number of FL clients                                     |
+| `M`        | Number of malicious clients                                    |
+| `ROUNDS`   | Total training rounds                                          |
+| `R`        | Number of rounds malicious clients use poisoned data           |
+| `NN_NAME`  | Neural network model name                                      |
 | `strategy` | Malicious client distribution: `first`, `last`, or `alternate` |
 
 ### Data Poisoning Attacks
 
-| Attack Type | Description |
-|-------------|-------------|
-| **Label Flip** | Flips the class label of a percentage of samples to a target class (user-selected or random) |
-| **Backdoor — BadNets** | Injects a small trigger pattern (cross, square, etc.) onto a percentage of images |
-| **Backdoor — Blended** | Blends the original image with a key pattern using a configurable ratio ([paper](https://arxiv.org/pdf/1712.05526)) |
-| **Backdoor — Sinusoidal** | Adds a sinusoidal signal to images with user-configurable frequency and amplitude |
-| **Backdoor — Trojan** | Inserts a watermark-style trigger into images (conceptually similar to BadNets) |
-| **Backdoor — Semantic** | Modifies natural image features (brightness, RGB tint) |
-| **Edge-Case Backdoor** | Applies image transformations: rotation, color reduction, solarization, or grayscale intensity reduction |
+| Attack Type               | Description                                                                                                         |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Label Flip**            | Flips the class label of a percentage of samples to a target class (user-selected or random)                        |
+| **Backdoor — BadNets**    | Injects a small trigger pattern (cross, square, etc.) onto a percentage of images                                   |
+| **Backdoor — Blended**    | Blends the original image with a key pattern using a configurable ratio ([paper](https://arxiv.org/pdf/1712.05526)) |
+| **Backdoor — Sinusoidal** | Adds a sinusoidal signal to images with user-configurable frequency and amplitude                                   |
+| **Backdoor — Trojan**     | Inserts a watermark-style trigger into images (conceptually similar to BadNets)                                     |
+| **Backdoor — Semantic**   | Modifies natural image features (brightness, RGB tint)                                                              |
+| **Edge-Case Backdoor**    | Applies image transformations: rotation, color reduction, solarization, or grayscale intensity reduction            |
 
 ### Robust Aggregation Defenses
 
-| Method | Description |
-|--------|-------------|
-| **FedAvg** | Weighted average of client weights, proportional to dataset size. Standard method, but vulnerable to poisoning |
-| **Krum** | Selects the single client update with lowest total distance to all others, isolating malicious clients |
-| **Trimmed Mean** | Removes the top and bottom 20% extreme weight values, then averages the remainder |
-| **Median** | Replaces the mean with a per-parameter median, resistant to up to ~20% malicious clients |
-| **Trimmed Mean + Krum** | Hybrid approach combining Trimmed Mean filtering (trim_ratio=0.1) with Krum selection |
-| **Random** | Randomly selects one client's weights. Used as a comparison baseline |
+| Method                  | Description                                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **FedAvg**              | Weighted average of client weights, proportional to dataset size. Standard method, but vulnerable to poisoning |
+| **Krum**                | Selects the single client update with lowest total distance to all others, isolating malicious clients         |
+| **Trimmed Mean**        | Removes the top and bottom 20% extreme weight values, then averages the remainder                              |
+| **Median**              | Replaces the mean with a per-parameter median, resistant to up to ~20% malicious clients                       |
+| **Trimmed Mean + Krum** | Hybrid approach combining Trimmed Mean filtering (trim_ratio=0.1) with Krum selection                          |
+| **Random**              | Randomly selects one client's weights. Used as a comparison baseline                                           |
 
 ### Evaluation Metrics
 
@@ -433,54 +437,54 @@ Collected **per round** and **per scenario** (Clean / Clean+Defense / Poisoned /
 
 ### Authentication
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/register` | Register a new user |
-| POST | `/api/auth/login` | Login and receive JWT token |
-| GET | `/api/auth/me` | Get current user info |
+| Method | Endpoint             | Description                 |
+| ------ | -------------------- | --------------------------- |
+| POST   | `/api/auth/register` | Register a new user         |
+| POST   | `/api/auth/login`    | Login and receive JWT token |
+| GET    | `/api/auth/me`       | Get current user info       |
 
 ### Projects
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/projects` | List user's projects |
-| POST | `/api/projects` | Create a new project |
-| GET | `/api/projects/:id` | Get project details |
-| DELETE | `/api/projects/:id` | Delete a project |
+| Method | Endpoint            | Description          |
+| ------ | ------------------- | -------------------- |
+| GET    | `/api/projects`     | List user's projects |
+| POST   | `/api/projects`     | Create a new project |
+| GET    | `/api/projects/:id` | Get project details  |
+| DELETE | `/api/projects/:id` | Delete a project     |
 
 ### Files
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/projects/:id/files` | List files in a project |
-| POST | `/api/projects/:id/files` | Create a new file |
-| GET | `/api/files/:id` | Get file content |
-| PUT | `/api/files/:id` | Update file content |
-| DELETE | `/api/files/:id` | Delete a file |
-| PATCH | `/api/files/:id/rename` | Rename a file |
-| PATCH | `/api/files/:id/move` | Move file to another project |
-| POST | `/api/files/reorder` | Bulk reorder files |
+| Method | Endpoint                  | Description                  |
+| ------ | ------------------------- | ---------------------------- |
+| GET    | `/api/projects/:id/files` | List files in a project      |
+| POST   | `/api/projects/:id/files` | Create a new file            |
+| GET    | `/api/files/:id`          | Get file content             |
+| PUT    | `/api/files/:id`          | Update file content          |
+| DELETE | `/api/files/:id`          | Delete a file                |
+| PATCH  | `/api/files/:id/rename`   | Rename a file                |
+| PATCH  | `/api/files/:id/move`     | Move file to another project |
+| POST   | `/api/files/reorder`      | Bulk reorder files           |
 
 ### Simulations
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/run` | Submit a simulation |
-| POST | `/cancel/:task_id` | Cancel a running simulation |
-| GET | `/api/simulations` | List simulation history |
-| GET | `/api/simulations/:task_id` | Get simulation result |
+| Method | Endpoint                    | Description                 |
+| ------ | --------------------------- | --------------------------- |
+| POST   | `/run`                      | Submit a simulation         |
+| POST   | `/cancel/:task_id`          | Cancel a running simulation |
+| GET    | `/api/simulations`          | List simulation history     |
+| GET    | `/api/simulations/:task_id` | Get simulation result       |
 
 ### Orchestrator (GPU Server)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | Health check + GPU status |
-| POST | `/login` | Authenticate |
-| POST | `/simulate` | Start a simulation pipeline |
-| GET | `/status/:task_id` | Poll task status |
-| GET | `/results/:task_id` | Fetch completed results |
-| POST | `/cancel/:task_id` | Cancel and cleanup |
-| GET | `/gpu_status` | Current GPU allocation info |
+| Method | Endpoint            | Description                 |
+| ------ | ------------------- | --------------------------- |
+| GET    | `/`                 | Health check + GPU status   |
+| POST   | `/login`            | Authenticate                |
+| POST   | `/simulate`         | Start a simulation pipeline |
+| GET    | `/status/:task_id`  | Poll task status            |
+| GET    | `/results/:task_id` | Fetch completed results     |
+| POST   | `/cancel/:task_id`  | Cancel and cleanup          |
+| GET    | `/gpu_status`       | Current GPU allocation info |
 
 ---
 
@@ -548,15 +552,15 @@ BachelorThesisProject/
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| **Frontend** | React 18, Monaco Editor, Recharts, TailwindCSS, Lucide Icons |
-| **Backend API** | FastAPI, SQLAlchemy, Pydantic, PyJWT, Passlib (bcrypt) |
-| **Database** | PostgreSQL 16 |
-| **Orchestrator** | Flask, multiprocessing, psutil, GPUManager |
-| **ML Frameworks** | TensorFlow / PyTorch (via Conda environments) |
-| **Infrastructure** | Docker, Docker Compose, Docker Secrets |
-| **GPU Management** | nvidia-smi, CUDA, per-process GPU isolation |
+| Layer              | Technology                                                   |
+| ------------------ | ------------------------------------------------------------ |
+| **Frontend**       | React 18, Monaco Editor, Recharts, TailwindCSS, Lucide Icons |
+| **Backend API**    | FastAPI, SQLAlchemy, Pydantic, PyJWT, Passlib (bcrypt)       |
+| **Database**       | PostgreSQL 16                                                |
+| **Orchestrator**   | Flask, multiprocessing, psutil, GPUManager                   |
+| **ML Frameworks**  | TensorFlow / PyTorch (via Conda environments)                |
+| **Infrastructure** | Docker, Docker Compose, Docker Secrets                       |
+| **GPU Management** | nvidia-smi, CUDA, per-process GPU isolation                  |
 
 ---
 

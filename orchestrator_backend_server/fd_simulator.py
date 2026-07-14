@@ -1275,6 +1275,9 @@ class EnhancedFederatedClient:
             
             # Training with GPU semaphore
             if FRAMEWORK == 'pytorch':
+                # Semaforul e utilizat nu doar in scopul evitarii suprasolicitarii serverului cu un nr mare de simulari
+                # este utilizat si pt a gestiona mai bine memoria GPU dupa ce acei clienti termina de executat
+                # fiecare client are VRAM ul lui, care poate fi eliberata la final
                 _gpu_semaphore.acquire()
                 try:
                     self.model = self.model.to(DEVICE)
@@ -1291,6 +1294,8 @@ class EnhancedFederatedClient:
                     _gpu_semaphore.release()
             else:
                 # TensorFlow
+                # nu are nevoie de eliberarea VRAM intrucat procesul in sine are un singur pool VRAM care se expandeaza sau se elibereaza 
+                # la runtime; Arhitectura e diferita de PyTorch si modul de gestionare a memoriei pt a nu ajunge la OOM
                 set_model_weights_framework_agnostic(self.model, self.current_weights, self.use_template)
                 if self.use_template and TEMPLATE_FUNCS.has_function('train_neural_network'):
                     train_func = TEMPLATE_FUNCS.get_function('train_neural_network')

@@ -137,15 +137,17 @@ def distribute_dirichlet(train_files_by_class, num_clients, alpha, seed):
         
         if n_imgs == 0:
             continue
-        
+        # se genereaza un vector de N proportii 
         proportions = np.random.dirichlet([alpha] * num_clients)
+        # nr de imagini din clasa c per client (numere intregi)
         counts = (proportions * n_imgs).astype(int)
         
         # Fix rounding
+        # in cazul in  care ne raman imagini pe dinafara 
         diff = n_imgs - counts.sum()
-        if diff > 0:
+        if diff > 0:    # in acest caz avem imagini in plus, si le atribuim ultimei proportii
             counts[np.argmax(proportions)] += diff
-        elif diff < 0:
+        elif diff < 0:  # proportiile dau mai mult decat nr de imagini, deci scadem din cel mai mare nr
             counts[np.argmax(counts)] += diff
         
         idx = 0
